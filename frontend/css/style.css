@@ -66,7 +66,8 @@ input[type="number"] {
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   padding: 10px 16px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 10px;
 }
@@ -80,6 +81,8 @@ input[type="number"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: center;
+  justify-self: center;
 }
 
 .header-nav {
@@ -87,6 +90,15 @@ input[type="number"] {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+  justify-self: start;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  justify-self: end;
 }
 
 .icon-btn {
