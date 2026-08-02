@@ -491,10 +491,25 @@ input:focus {
   line-height: 1;
 }
 
+.stock-card-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
 .stock-card-name {
   font-size: 15px;
   font-weight: 700;
-  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-card-price-line {
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 .stock-card-return {

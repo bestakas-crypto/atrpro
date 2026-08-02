@@ -83,6 +83,7 @@ class Quote:
     price: float
     day_high: float
     quoted_at: str  # ISO datetime 문자열
+    change_pct: Optional[float] = None  # 전일 대비 등락률(%), 2026-08-02 추가
 
 
 class RateLimiter:
@@ -207,6 +208,9 @@ class KisClient:
 
         manual 폴더 명세 그대로: 요청은 FID_COND_MRKT_DIV_CODE(J)+FID_INPUT_ISCD,
         응답 output.stck_prpr(현재가)/output.stck_hgpr(당일 최고가)를 쓴다.
+        전일 대비율(output.prdy_ctrt, 2026-08-02 추가, manual 폴더 명세로
+        확인)도 같이 파싱한다 -- 가격 자체보다 부수적인 값이라 파싱에
+        실패해도 전체 조회를 막지 않고 None으로 둔다.
         """
         body = self._get_json(
             self._base_url() + EP_CURRENT_PRICE,
@@ -235,11 +239,17 @@ class KisClient:
                 "종목 설정에서 거래소(시장)를 올바르게 선택했는지 확인하세요."
             )
 
+        try:
+            change_pct = float(output["prdy_ctrt"])
+        except (KeyError, ValueError):
+            change_pct = None
+
         return Quote(
             instrument_code=instrument_code,
             price=price,
             day_high=day_high,
             quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            change_pct=change_pct,
         )
 
     def _get_overseas_price(self, instrument_code: str, market: str) -> Quote:
@@ -249,6 +259,11 @@ class KisClient:
         요청 AUTH(빈값)+EXCD(거래소코드)+SYMB(종목코드), 응답
         output.last(현재가)/output.high(당일 고가)를 쓴다. 2026-08-02 QQQ/NAS로
         실전 계좌에서 직접 검증(687.99 USD 등 정상값 확인).
+
+        국내 TR과 달리 전일 대비율 필드가 따로 없어서(output.base=전일종가만
+        있음), (현재가-전일종가)/전일종가*100으로 직접 계산한다. 전일종가가
+        없거나 0이면(신규 상장 등) 그냥 None으로 둔다 -- 가격 자체보다
+        부수적인 값이라 전체 조회를 막지 않는다.
         """
         body = self._get_json(
             self._base_url() + EP_OVERSEAS_PRICE_DETAIL,
@@ -273,11 +288,18 @@ class KisClient:
                 "거래소코드/종목코드가 맞는지 확인하세요."
             )
 
+        try:
+            prev_close = float(output["base"])
+            change_pct = (price - prev_close) / prev_close * 100 if prev_close > 0 else None
+        except (KeyError, ValueError):
+            change_pct = None
+
         return Quote(
             instrument_code=instrument_code,
             price=price,
             day_high=day_high,
             quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            change_pct=change_pct,
         )
 
     def get_daily_bars(
@@ -425,6 +447,8 @@ def _dummy_quote(instrument_code: str) -> Quote:
     rng = _seeded_random(instrument_code + "-quote")
     price = round(base * rng.uniform(0.97, 1.03), -1)
     day_high = max(price, round(base * rng.uniform(1.0, 1.04), -1))
+    prev_close = base * rng.uniform(0.97, 1.03)
+    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close > 0 else None
     return Quote(
         instrument_code=instrument_code,
         price=price,
@@ -432,6 +456,7 @@ def _dummy_quote(instrument_code: str) -> Quote:
         # UTC-aware로 통일 (repositories/market_data.py의 utils.utcnow_iso()와
         # 동일한 형식이어야 신선도 경과시간 계산이 타임존 불일치로 틀어지지 않는다).
         quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        change_pct=change_pct,
     )
 
 

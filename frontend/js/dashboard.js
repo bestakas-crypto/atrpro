@@ -61,7 +61,7 @@ function renderList(ctx, dashboard) {
   el.stockListEmpty.hidden = rows.length > 0;
 
   rows.forEach((row) => {
-    const { instrument, position, signal, cost_basis: cost, eval_value: evalValue } = row;
+    const { instrument, position, quote, signal, cost_basis: cost, eval_value: evalValue } = row;
     const card = document.createElement('div');
     card.className = 'stock-card';
     card.dataset.id = instrument.id;
@@ -74,10 +74,30 @@ function renderList(ctx, dashboard) {
     signalSpan.textContent = signalEmoji(signal ? signal.status : null);
     top.appendChild(signalSpan);
 
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'stock-card-name-wrap';
+
     const nameSpan = document.createElement('span');
     nameSpan.className = 'stock-card-name';
     nameSpan.textContent = instrument.name;
-    top.appendChild(nameSpan);
+    nameWrap.appendChild(nameSpan);
+
+    // 현재가 + 전일 대비 등락률 -- 실시간은 아니고 마지막으로 갱신된
+    // 시세 기준이다(2026-08-02 추가).
+    if (quote) {
+      const priceLine = document.createElement('span');
+      priceLine.className = 'stock-card-price-line mono';
+      priceLine.textContent = formatPrice(quote.price);
+      if (quote.change_pct != null) {
+        const changeSpan = document.createElement('span');
+        changeSpan.className = pnlClass(quote.change_pct);
+        changeSpan.textContent = ' ' + formatPercent(quote.change_pct);
+        priceLine.appendChild(changeSpan);
+      }
+      nameWrap.appendChild(priceLine);
+    }
+
+    top.appendChild(nameWrap);
 
     const returnSpan = document.createElement('span');
     returnSpan.className = 'stock-card-return mono';

@@ -35,9 +35,22 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """CREATE TABLE IF NOT EXISTS는 이미 존재하는 테이블에 새 컬럼을 추가해주지
+    않는다 -- 이미 실제 데이터가 든 DB(예: VPS)에서 스키마에 컬럼을 새로
+    추가했을 때, 여기서 없으면 ALTER TABLE로 보충한다. 매번 PRAGMA로 확인 후
+    없을 때만 실행하므로 반복 호출해도 안전하다."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     for statement in DDL_STATEMENTS:
         conn.execute(statement)
+    # 2026-08-02 추가: 이미 만들어져 있던 quote_latest 테이블에 change_pct
+    # 컬럼을 보충한다(신규 DB는 위 CREATE TABLE에 이미 포함돼 있어 no-op).
+    _add_column_if_missing(conn, "quote_latest", "change_pct", "change_pct REAL")
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

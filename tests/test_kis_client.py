@@ -201,13 +201,14 @@ def test_get_current_price_parses_real_response_shape(fake_credentials):
     """[v1_국내주식-008] 명세의 Response Example 구조 그대로."""
     client = _client_with_fake_transport({
         "rt_cd": "0", "msg_cd": "MCA00000", "msg1": "정상처리 되었습니다!",
-        "output": {"stck_prpr": "128500", "stck_hgpr": "130000", "stck_lwpr": "128500"},
+        "output": {"stck_prpr": "128500", "stck_hgpr": "130000", "stck_lwpr": "128500", "prdy_ctrt": "1.23"},
     })
     try:
         quote = client.get_current_price("000660")
         assert quote.price == 128500.0
         assert quote.day_high == 130000.0
         assert quote.instrument_code == "000660"
+        assert quote.change_pct == 1.23
     finally:
         client.close()
 
@@ -288,14 +289,35 @@ def test_get_daily_bars_raises_kis_api_error_on_zero_close(fake_credentials):
 def test_get_current_price_routes_to_overseas_tr_when_market_given(fake_credentials):
     client = _client_with_fake_transport({
         "rt_cd": "0", "msg1": "정상처리 되었습니다.",
-        "output": {"last": "687.99", "high": "695.77", "low": "680.05", "curr": "USD"},
+        "output": {"last": "687.99", "high": "695.77", "low": "680.05", "curr": "USD", "base": "680.00"},
     })
     try:
         quote = client.get_current_price("QQQ", market="NAS")
         assert quote.price == 687.99
         assert quote.day_high == 695.77
+        # 해외 TR은 등락률 필드가 따로 없어서 (현재가-전일종가)/전일종가*100으로 계산.
+        assert quote.change_pct == pytest.approx((687.99 - 680.00) / 680.00 * 100)
     finally:
         client.close()
+
+
+def test_get_current_price_change_pct_none_when_field_missing(fake_credentials):
+    """전일 대비율/전일종가 필드가 없거나 파싱이 안 되면 그냥 None이어야
+    한다 -- 가격 자체보다 부수적인 값이라 전체 조회를 막으면 안 됨."""
+    domestic = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output": {"stck_prpr": "128500", "stck_hgpr": "130000", "stck_lwpr": "128500"},
+    })
+    overseas = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output": {"last": "687.99", "high": "695.77", "low": "680.05", "curr": "USD"},
+    })
+    try:
+        assert domestic.get_current_price("000660").change_pct is None
+        assert overseas.get_current_price("QQQ", market="NAS").change_pct is None
+    finally:
+        domestic.close()
+        overseas.close()
 
 
 def test_get_current_price_domestic_when_market_is_krx_or_blank(fake_credentials):

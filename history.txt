@@ -712,3 +712,42 @@
     검증하는 테스트 1개 추가.
   - service-worker.js 캐시 v5 -> v6.
   - pytest 140 -> 141개, 전부 통과.
+
+--------------------------------------------------------------------
+[종목명 옆에 현재가 + 전일 대비 등락률 표시] (2026-08-03)
+--------------------------------------------------------------------
+  - 사용자 요청: 종목명 옆에 현재가와 어제 대비 등락률 표시("실시간 아니어도
+    됨, 최근 갱신된 값만 보여주면 됨" -- 그래서 KIS가 마지막 조회 시점에
+    준 값을 그대로 저장/표시하는 방식으로 감).
+  - 필드 조사(manual 폴더 명세 직접 확인): 국내 TR([v1_국내주식-008])은
+    output.prdy_ctrt(전일 대비율)를 그대로 제공. 해외 TR(price-detail,
+    [v1_해외주식-029])은 등락률 필드가 따로 없고 output.base(전일종가)만
+    있어서 (현재가-전일종가)/전일종가*100로 직접 계산.
+  - kis_client.py: Quote 데이터클래스에 change_pct 필드 추가,
+    _get_domestic_price/_get_overseas_price/_dummy_quote 각각 채우도록
+    수정. 파싱 실패해도 가격 조회 자체를 막지 않고 None으로만 둠(부수적인
+    값이라서).
+  - **스키마 변경 시 실수하기 쉬운 부분 처리**: quote_latest 테이블에
+    change_pct 컬럼을 추가했는데, CREATE TABLE IF NOT EXISTS는 이미
+    데이터가 든 기존 DB(VPS에 실제 QQQ/Kodex 200 데이터가 있음)에는
+    컬럼을 안 만들어준다 -- db.py에 _add_column_if_missing() 마이그레이션
+    헬퍼를 추가해서 init_db() 안에서 PRAGMA table_info로 확인 후 없으면
+    ALTER TABLE로 보충하도록 함. 기존 행 데이터 안 날아가는지 별도
+    테스트(tests/test_db.py)로 검증.
+  - market_data_repo.upsert_quote/get_quote, portfolio_service.commit_quote,
+    worker.py/refresh_quote_now 호출부까지 change_pct를 끝까지 관통시킴.
+  - 프런트: 종목 목록 카드의 종목명 아래에 "현재가 (등락률)" 한 줄 추가
+    (.stock-card-name-wrap로 세로 배치, 기존 손익률 배지는 그대로 유지 --
+    손익률은 매입가 대비, 등락률은 전일 대비로 서로 다른 지표라 둘 다
+    남김). 보고서 표에도 "전일 대비" 컬럼 추가.
+  - **디버깅 에피소드**: 로컬에서 "주가 갱신"을 눌렀더니 change_pct가
+    계속 null로 나와서 원인을 팠는데, 코드 버그가 아니라 오늘 테스트를
+    너무 많이 해서 KIS 토큰 발급이 다시 403으로 막혀 있었던 것(기존에
+    성공했던 옛날 시세가 그대로 남아있었을 뿐, 실제로는 갱신 자체가
+    조용히 실패하고 있었음 -- 에러 핸들링은 정확히 의도대로 동작). 직접
+    _get_domestic_price() 단위 호출로 파싱 로직 자체는 정상(24.17%)임을
+    별도로 확인했고, 프런트 렌더링은 DB에 값을 수동으로 넣어서 검증함.
+  - tests/test_kis_client.py: 국내 prdy_ctrt 파싱, 해외 base 기반 계산,
+    필드 없을 때 None 폴백 -- 테스트 3개 추가.
+  - service-worker.js 캐시 v6 -> v7.
+  - pytest 141 -> 143개, 전부 통과.

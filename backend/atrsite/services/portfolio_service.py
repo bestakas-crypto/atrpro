@@ -308,6 +308,7 @@ def _reconcile_after_trade_change(conn: sqlite3.Connection, instrument_id: str) 
 def commit_quote(
     conn: sqlite3.Connection, instrument_id: str, *, price: float, quoted_at: Optional[str] = None,
     source: str = "manual", data_status: str = "MANUAL_OVERRIDE", day_high: Optional[float] = None,
+    change_pct: Optional[float] = None,
 ) -> dict[str, Any]:
     """현재가 반영 -- 스펙 13.2 "수동 보정"(2단계) 및 worker.py의 KIS 자동 조회(3단계)
     양쪽에서 공유하는 진입점. source/data_status로 둘을 구분한다
@@ -320,7 +321,7 @@ def commit_quote(
     price만 본다.
     """
     market_data_repo.upsert_quote(conn, instrument_id, price=price, source=source,
-                                   data_status=data_status, quoted_at=quoted_at)
+                                   data_status=data_status, quoted_at=quoted_at, change_pct=change_pct)
     instrument = instruments_repo.get_instrument(conn, instrument_id)
     high_candidate = max(price, day_high) if day_high is not None else price
     if instrument["auto_update_high"] and (
@@ -361,7 +362,7 @@ def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str,
 
     return commit_quote(
         conn, instrument_id, price=quote.price, quoted_at=quote.quoted_at,
-        source="kis", data_status="FRESH", day_high=quote.day_high,
+        source="kis", data_status="FRESH", day_high=quote.day_high, change_pct=quote.change_pct,
     )
 
 

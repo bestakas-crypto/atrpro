@@ -106,7 +106,8 @@ DDL_STATEMENTS: list[str] = [
         quoted_at            TEXT NOT NULL,
         source               TEXT NOT NULL DEFAULT 'manual',
         data_status          TEXT NOT NULL DEFAULT 'MANUAL_OVERRIDE',
-        consecutive_failures INTEGER NOT NULL DEFAULT 0
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        change_pct           REAL
     )
     """,
     """

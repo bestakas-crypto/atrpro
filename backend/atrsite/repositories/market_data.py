@@ -19,20 +19,25 @@ def upsert_quote(
     source: str = "manual",
     data_status: str = "MANUAL_OVERRIDE",
     quoted_at: str | None = None,
+    change_pct: float | None = None,
 ) -> dict[str, Any]:
     """새 시세 조회 성공. consecutive_failures는 항상 0으로 리셋한다 --
-    실패가 연속되지 않고 있다는 뜻이므로(스펙 17.3 신선도 등급 계산의 전제)."""
+    실패가 연속되지 않고 있다는 뜻이므로(스펙 17.3 신선도 등급 계산의 전제).
+
+    change_pct(전일 대비 등락률, 2026-08-02 추가)는 KIS가 준 값을 그대로
+    저장할 뿐 여기서 계산하지 않는다 -- 수동 입력(source="manual")일 때는
+    당연히 없음(None)."""
     ts = quoted_at or utcnow_iso()
     conn.execute(
         """
-        INSERT INTO quote_latest (instrument_id, price, quoted_at, source, data_status, consecutive_failures)
-        VALUES (?, ?, ?, ?, ?, 0)
+        INSERT INTO quote_latest (instrument_id, price, quoted_at, source, data_status, consecutive_failures, change_pct)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
         ON CONFLICT(instrument_id) DO UPDATE SET
             price = excluded.price, quoted_at = excluded.quoted_at,
             source = excluded.source, data_status = excluded.data_status,
-            consecutive_failures = 0
+            consecutive_failures = 0, change_pct = excluded.change_pct
         """,
-        (instrument_id, price, ts, source, data_status),
+        (instrument_id, price, ts, source, data_status, change_pct),
     )
     return get_quote(conn, instrument_id)  # type: ignore[return-value]
 
@@ -58,6 +63,7 @@ def get_quote(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any] | 
         "source": row["source"],
         "data_status": row["data_status"],
         "consecutive_failures": row["consecutive_failures"],
+        "change_pct": row["change_pct"],
     }
 
 

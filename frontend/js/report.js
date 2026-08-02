@@ -90,6 +90,7 @@ function renderHoldingsTable(dashboard) {
     el('th', { text: '종목명' }),
     el('th', { text: '통화' }),
     el('th', { text: '현재가' }),
+    el('th', { text: '전일 대비' }),
     el('th', { text: '보유수량' }),
     el('th', { text: '평균단가' }),
     el('th', { text: '매입금액' }),
@@ -106,10 +107,13 @@ function renderHoldingsTable(dashboard) {
       ? (evalValue / position.quantity - position.avg_price) / position.avg_price * 100
       : null;
     const pctCell = el('td', { className: `mono ${pnlClass(pct)}`, text: formatPercent(pct) });
+    const changePct = quote ? quote.change_pct : null;
+    const changeCell = el('td', { className: `mono ${pnlClass(changePct)}`, text: changePct != null ? formatPercent(changePct) : '-' });
     tbody.appendChild(el('tr', {}, [
       el('td', { text: instrument.name }),
       el('td', { text: instrument.currency }),
       el('td', { className: 'mono', text: quote ? formatPrice(quote.price) : '-' }),
+      changeCell,
       el('td', { className: 'mono', text: formatPrice(position ? position.quantity : 0) }),
       el('td', { className: 'mono', text: formatPrice(position ? position.avg_price : 0) }),
       el('td', { className: 'mono', text: formatMoney(cost) }),
