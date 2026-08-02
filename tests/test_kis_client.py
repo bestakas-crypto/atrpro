@@ -226,6 +226,66 @@ def test_get_daily_bars_raises_kis_api_error_on_zero_close(fake_credentials):
         client.close()
 
 
+# ---------------------------------------------------------------------------
+# 해외주식 TR -- KIS 공식 GitHub 예제(examples_llm/overseas_stock)로 확인한
+# 필드명, 2026-08-02 QQQ/NAS로 실전 계좌 검증까지 완료 (2026-08-02 추가).
+# ---------------------------------------------------------------------------
+
+def test_get_current_price_routes_to_overseas_tr_when_market_given(fake_credentials):
+    client = _client_with_fake_transport({
+        "rt_cd": "0", "msg1": "정상처리 되었습니다.",
+        "output": {"last": "687.99", "high": "695.77", "low": "680.05", "curr": "USD"},
+    })
+    try:
+        quote = client.get_current_price("QQQ", market="NAS")
+        assert quote.price == 687.99
+        assert quote.day_high == 695.77
+    finally:
+        client.close()
+
+
+def test_get_current_price_domestic_when_market_is_krx_or_blank(fake_credentials):
+    client = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output": {"stck_prpr": "128500", "stck_hgpr": "130000", "stck_lwpr": "128500"},
+    })
+    try:
+        quote_blank = client.get_current_price("000660", market=None)
+        quote_krx = client.get_current_price("000660", market="KRX")
+        assert quote_blank.price == quote_krx.price == 128500.0
+    finally:
+        client.close()
+
+
+def test_get_current_price_raises_kis_api_error_on_overseas_zero_price(fake_credentials):
+    """국내 TR과 같은 이유로 방어 -- 잘못된 종목코드/거래소코드 조합에 대비."""
+    client = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output": {"last": "0", "high": "0", "low": "0", "curr": "USD"},
+    })
+    try:
+        with pytest.raises(KisApiError):
+            client.get_current_price("NOSUCH", market="NAS")
+    finally:
+        client.close()
+
+
+def test_get_daily_bars_overseas_parses_and_sorts_ascending(fake_credentials):
+    client = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output2": [
+            {"xymd": "20260731", "clos": "687.99", "high": "695.77", "low": "680.05"},
+            {"xymd": "20260730", "clos": "683.55", "high": "690.00", "low": "681.00"},
+        ],
+    })
+    try:
+        bars = client.get_daily_bars("QQQ", "2026-06-01", "2026-07-31", market="NAS")
+        assert [b.trade_date for b in bars] == ["2026-07-30", "2026-07-31"]
+        assert bars[1].close == 687.99
+    finally:
+        client.close()
+
+
 def test_get_daily_bars_skips_blank_rows(fake_credentials):
     client = _client_with_fake_transport({
         "rt_cd": "0",

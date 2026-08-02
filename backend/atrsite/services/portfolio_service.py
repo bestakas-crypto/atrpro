@@ -354,7 +354,7 @@ def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str,
 
     client = get_client()
     try:
-        quote = client.get_current_price(instrument["kis_code"])
+        quote = client.get_current_price(instrument["kis_code"], market=instrument["kis_market"])
     except KisApiError as exc:
         raise RefreshQuoteError(f"KIS 시세 조회 실패: {exc}") from exc
 

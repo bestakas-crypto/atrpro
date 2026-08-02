@@ -272,6 +272,7 @@ function renderSettingsFields(ctx, instrument) {
   el.settingsStopMult.value = instrument.stop_multiple;
   el.settingsTrancheAmount.value = instrument.tranche_amount != null ? instrument.tranche_amount : '';
   el.settingsKisCode.value = instrument.kis_code || '';
+  el.settingsKisMarket.value = instrument.kis_market || 'KRX';
   el.btnRefreshQuote.disabled = !instrument.kis_code;
   el.refreshQuoteHint.textContent = instrument.kis_code
     ? ''
@@ -370,6 +371,7 @@ export async function handleSaveSettings(ctx) {
     stop_multiple: num(el.settingsStopMult.value),
     tranche_amount: num(el.settingsTrancheAmount.value),
     kis_code: el.settingsKisCode.value.trim() || null,
+    kis_market: el.settingsKisMarket.value || 'KRX',
   };
   try {
     await api.updateInstrumentSettings(state.currentInstrument.instrument.id, body);

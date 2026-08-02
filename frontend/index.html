@@ -232,7 +232,16 @@
       </div>
       <div class="field-group">
         <label for="settings-kis-code">KIS 종목코드 (자동 시세 조회용)</label>
-        <input type="text" id="settings-kis-code" placeholder="예: 005930" />
+        <input type="text" id="settings-kis-code" placeholder="예: 005930, QQQ" />
+      </div>
+      <div class="field-group">
+        <label for="settings-kis-market">거래소 (KIS 종목코드 입력 시)</label>
+        <select id="settings-kis-market">
+          <option value="KRX">국내 (KRX)</option>
+          <option value="NAS">나스닥 (NAS)</option>
+          <option value="NYS">뉴욕 (NYS)</option>
+          <option value="AMS">아멕스 (AMS)</option>
+        </select>
       </div>
       <button id="btn-save-settings" class="btn btn-secondary btn-block">설정 저장</button>
       <div class="settings-danger-zone">
@@ -297,7 +306,16 @@
     </div>
     <div class="field-group">
       <label for="add-stock-kis-code">KIS 종목코드 (선택)</label>
-      <input type="text" id="add-stock-kis-code" placeholder="예: 005930" />
+      <input type="text" id="add-stock-kis-code" placeholder="예: 005930, QQQ" />
+    </div>
+    <div class="field-group">
+      <label for="add-stock-kis-market">거래소 (KIS 종목코드 입력 시)</label>
+      <select id="add-stock-kis-market">
+        <option value="KRX">국내 (KRX)</option>
+        <option value="NAS">나스닥 (NAS)</option>
+        <option value="NYS">뉴욕 (NYS)</option>
+        <option value="AMS">아멕스 (AMS)</option>
+      </select>
     </div>
     <div class="field-group">
       <label for="add-stock-currency">통화</label>

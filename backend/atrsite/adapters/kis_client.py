@@ -13,6 +13,14 @@ telegram_client.py와 동일한 더미 모드 패턴: KIS_APP_KEY/KIS_APP_SECRET
 .env에 없으면(로컬 개발/테스트 기본값) 실제 호출 대신 결정론적 더미 데이터를
 반환한다 -- pytest가 실제 KIS 서버나 유효한 자격증명 없이도 항상 통과해야
 하기 때문이다.
+
+해외주식(예: 나스닥 QQQ) 시세 TR("해외주식 현재가상세[v1_해외주식-029]",
+"해외주식 기간별시세[v1_해외주식-010]")도 동일한 방식으로 지원한다 --
+manual 폴더에는 해외주식 명세 파일이 없어서, KIS 공식 GitHub
+(koreainvestment/open-trading-api)의 예제 코드로 TR ID/파라미터/응답
+필드명을 확인하고, 실전 계좌로 QQQ를 직접 조회해 값이 정상인지 검증했다
+(2026-08-02). instrument.kis_market이 비어있거나 "KRX"면 기존 국내 TR을,
+그 외(NAS/NYS/AMS 등 거래소코드)면 해외 TR을 쓴다.
 """
 from __future__ import annotations
 
@@ -42,6 +50,21 @@ EP_DAILY_CHART_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemcha
 # FID_COND_MRKT_DIV_CODE -- "J:KRX, NX:NXT, UN:통합" (명세 그대로). 국내 상장
 # 종목은 KRX 기준으로 조회한다.
 FID_MARKET_DIV_KRX = "J"
+
+# 해외주식 현재가상세 [v1_해외주식-029] / 기간별시세 [v1_해외주식-010].
+# KIS 공식 예제(examples_llm/overseas_stock)로 확인, 2026-08-02 QQQ로 실전 검증.
+TR_OVERSEAS_PRICE_DETAIL = "HHDFS76200200"
+EP_OVERSEAS_PRICE_DETAIL = "/uapi/overseas-price/v1/quotations/price-detail"
+TR_OVERSEAS_DAILY_PRICE = "HHDFS76240000"
+EP_OVERSEAS_DAILY_PRICE = "/uapi/overseas-price/v1/quotations/dailyprice"
+
+# instrument.kis_market이 비어있거나 이 값이면 국내(KRX) TR을 쓴다. 그 외
+# 문자열(NAS/NYS/AMS 등 KIS 거래소코드)은 그대로 EXCD 파라미터로 넘긴다.
+DOMESTIC_MARKET = "KRX"
+
+
+def _is_domestic(market: Optional[str]) -> bool:
+    return not market or market.upper() == DOMESTIC_MARKET
 
 
 class KisApiError(RuntimeError):
@@ -146,16 +169,23 @@ class KisClient:
             "custtype": "P",
         }
 
-    def get_current_price(self, instrument_code: str) -> Quote:
+    def get_current_price(self, instrument_code: str, market: Optional[str] = None) -> Quote:
+        """market이 국내(KRX)면 주식현재가 시세[v1_국내주식-008], 그 외(NAS 등
+        해외 거래소코드)면 해외주식 현재가상세[v1_해외주식-029]를 쓴다."""
+        self.rate_limiter.wait()
+        if is_dummy_mode():
+            return _dummy_quote(instrument_code)
+
+        if _is_domestic(market):
+            return self._get_domestic_price(instrument_code)
+        return self._get_overseas_price(instrument_code, market)
+
+    def _get_domestic_price(self, instrument_code: str) -> Quote:
         """주식현재가 시세 [v1_국내주식-008] (TR FHKST01010100).
 
         manual 폴더 명세 그대로: 요청은 FID_COND_MRKT_DIV_CODE(J)+FID_INPUT_ISCD,
         응답 output.stck_prpr(현재가)/output.stck_hgpr(당일 최고가)를 쓴다.
         """
-        self.rate_limiter.wait()
-        if is_dummy_mode():
-            return _dummy_quote(instrument_code)
-
         res = self._http.get(
             self._base_url() + EP_CURRENT_PRICE,
             headers=self._headers(TR_CURRENT_PRICE),
@@ -182,8 +212,8 @@ class KisClient:
         if price <= 0:
             raise KisApiError(
                 f"현재가 조회 결과가 비정상입니다(code={instrument_code}): "
-                "국내(KRX) 상장 종목 코드가 맞는지 확인하세요. 해외 종목은 "
-                "아직 지원하지 않습니다."
+                "국내(KRX) 상장 종목 코드가 맞는지 확인하세요. 해외 종목이면 "
+                "종목 설정에서 거래소(시장)를 올바르게 선택했는지 확인하세요."
             )
 
         return Quote(
@@ -193,7 +223,61 @@ class KisClient:
             quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
 
-    def get_daily_bars(self, instrument_code: str, start_date: str, end_date: str) -> list[DailyBar]:
+    def _get_overseas_price(self, instrument_code: str, market: str) -> Quote:
+        """해외주식 현재가상세 [v1_해외주식-029] (TR HHDFS76200200).
+
+        KIS 공식 예제(examples_llm/overseas_stock/price_detail)로 확인:
+        요청 AUTH(빈값)+EXCD(거래소코드)+SYMB(종목코드), 응답
+        output.last(현재가)/output.high(당일 고가)를 쓴다. 2026-08-02 QQQ/NAS로
+        실전 계좌에서 직접 검증(687.99 USD 등 정상값 확인).
+        """
+        res = self._http.get(
+            self._base_url() + EP_OVERSEAS_PRICE_DETAIL,
+            headers=self._headers(TR_OVERSEAS_PRICE_DETAIL),
+            params={"AUTH": "", "EXCD": market, "SYMB": instrument_code},
+            timeout=10,
+        )
+        res.raise_for_status()
+        body = res.json()
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"해외 현재가 조회 실패 code={instrument_code} market={market} "
+                f"rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+        output = body.get("output") or {}
+        try:
+            price = float(output["last"])
+            day_high = float(output["high"])
+        except (KeyError, ValueError) as exc:
+            raise KisApiError(f"해외 현재가 응답 형식 이상 code={instrument_code}: {output}") from exc
+
+        if price <= 0:
+            raise KisApiError(
+                f"해외 현재가 조회 결과가 비정상입니다(code={instrument_code}, market={market}): "
+                "거래소코드/종목코드가 맞는지 확인하세요."
+            )
+
+        return Quote(
+            instrument_code=instrument_code,
+            price=price,
+            day_high=day_high,
+            quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+
+    def get_daily_bars(
+        self, instrument_code: str, start_date: str, end_date: str, market: Optional[str] = None,
+    ) -> list[DailyBar]:
+        """market이 국내(KRX)면 국내주식기간별시세[v1_국내주식-016], 그 외면
+        해외주식 기간별시세[v1_해외주식-010]를 쓴다."""
+        self.rate_limiter.wait()
+        if is_dummy_mode():
+            return _dummy_daily_bars(instrument_code, start_date, end_date)
+
+        if _is_domestic(market):
+            return self._get_domestic_daily_bars(instrument_code, start_date, end_date)
+        return self._get_overseas_daily_bars(instrument_code, end_date, market)
+
+    def _get_domestic_daily_bars(self, instrument_code: str, start_date: str, end_date: str) -> list[DailyBar]:
         """국내주식기간별시세(일_주_월_년) [v1_국내주식-016] (TR FHKST03010100).
 
         manual 폴더 명세 그대로: FID_PERIOD_DIV_CODE=D(일봉), FID_ORG_ADJ_PRC=0
@@ -202,10 +286,6 @@ class KisClient:
         날짜 오름차순으로 다시 정렬한다 -- atr_engine이 과거->최신 순서를
         전제로 하기 때문).
         """
-        self.rate_limiter.wait()
-        if is_dummy_mode():
-            return _dummy_daily_bars(instrument_code, start_date, end_date)
-
         res = self._http.get(
             self._base_url() + EP_DAILY_CHART_PRICE,
             headers=self._headers(TR_DAILY_CHART_PRICE),
@@ -243,6 +323,58 @@ class KisClient:
                 raise KisApiError(
                     f"일봉 조회 결과가 비정상입니다(code={instrument_code}): "
                     "국내(KRX) 상장 종목 코드가 맞는지 확인하세요."
+                )
+            bars.append(DailyBar(
+                trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                high=high,
+                low=low,
+                close=close,
+            ))
+
+        bars.sort(key=lambda b: b.trade_date)
+        return bars
+
+    def _get_overseas_daily_bars(self, instrument_code: str, end_date: str, market: str) -> list[DailyBar]:
+        """해외주식 기간별시세 [v1_해외주식-010] (TR HHDFS76240000).
+
+        국내 TR과 달리 날짜 범위가 아니라 기준일(BYMD) 하나만 받고 거기서부터
+        과거로 최대 100건을 돌려준다 -- start_date는 쓰지 않는다(ATR 계산에
+        필요한 15개보다 훨씬 많이 오므로 문제 없음). 2026-08-02 QQQ/NAS로
+        실전 계좌에서 직접 검증(100건, 최신순으로 옴 -> 오름차순 재정렬 필요,
+        국내 TR과 동일).
+        """
+        res = self._http.get(
+            self._base_url() + EP_OVERSEAS_DAILY_PRICE,
+            headers=self._headers(TR_OVERSEAS_DAILY_PRICE),
+            params={
+                "AUTH": "", "EXCD": market, "SYMB": instrument_code,
+                "GUBN": "0", "BYMD": end_date.replace("-", ""), "MODP": "0",
+            },
+            timeout=10,
+        )
+        res.raise_for_status()
+        body = res.json()
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"해외 일봉 조회 실패 code={instrument_code} market={market} "
+                f"rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+
+        bars: list[DailyBar] = []
+        for row in body.get("output2") or []:
+            raw_date = row.get("xymd")
+            if not raw_date:
+                continue
+            try:
+                close = float(row["clos"])
+                high = float(row["high"])
+                low = float(row["low"])
+            except (KeyError, ValueError) as exc:
+                raise KisApiError(f"해외 일봉 응답 형식 이상 code={instrument_code}: {row}") from exc
+            if close <= 0:
+                raise KisApiError(
+                    f"해외 일봉 조회 결과가 비정상입니다(code={instrument_code}, market={market}): "
+                    "거래소코드/종목코드가 맞는지 확인하세요."
                 )
             bars.append(DailyBar(
                 trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
