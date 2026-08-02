@@ -3,7 +3,7 @@
 // deposits/legacy-export)을 여기서 하나로 묶는다.
 import { api } from './api-client.js';
 import { latestSyncedAt } from './offline-snapshot.js';
-import { loadAndRenderList, autoFetchFxRates } from './dashboard.js';
+import { loadAndRenderList, autoFetchFxRates, refreshAllQuotes } from './dashboard.js';
 import {
   loadAndRenderDetail, renderDetail, updateCustomPctResult, commitCurrentPrice, commitAtr,
   commitPostHigh, commitAutoUpdateHigh, handleSaveSettings, handleResetStock, handleDeleteStock,
@@ -19,6 +19,7 @@ function cacheDom() {
   const ids = [
     'btn-nav-back', 'btn-nav-forward', 'btn-nav-refresh', 'header-title',
     'view-list', 'btn-add-stock', 'btn-add-deposit', 'btn-open-import',
+    'btn-refresh-all-quotes', 'refresh-all-quotes-hint',
     'btn-toggle-total', 'total-cost-sum', 'total-eval-sum', 'total-deposit-sum', 'total-asset-sum',
     'total-pnl-sum', 'total-chevron', 'total-summary-detail', 'total-detail-rows', 'total-deposit-detail-rows',
     'total-missing-note', 'total-eval-missing-note', 'total-deposit-missing-note',
@@ -167,6 +168,7 @@ function bindEvents() {
   });
 
   el.btnOpenImport.addEventListener('click', () => openImportModal(ctx));
+  el.btnRefreshAllQuotes.addEventListener('click', () => refreshAllQuotes(ctx));
   el.btnImportCancel.addEventListener('click', () => closeImportModal(ctx));
   el.importFileInput.addEventListener('change', () => handleFileSelected(ctx));
   el.btnImportConfirm.addEventListener('click', () => handleImportConfirm(ctx));

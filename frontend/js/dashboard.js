@@ -314,3 +314,34 @@ export async function autoFetchFxRates(ctx) {
     return false;
   }
 }
+
+export async function refreshAllQuotes(ctx) {
+  const { el } = ctx;
+  el.btnRefreshAllQuotes.disabled = true;
+  el.btnRefreshAllQuotes.textContent = '갱신 중...';
+  el.refreshAllQuotesHint.hidden = true;
+  let result;
+  try {
+    result = await api.refreshAllQuotes();
+  } catch (e) {
+    ctx.showToast('주가 갱신 실패: ' + e.message);
+    return;
+  } finally {
+    el.btnRefreshAllQuotes.disabled = false;
+    el.btnRefreshAllQuotes.textContent = '주가 갱신';
+  }
+
+  await loadAndRenderList(ctx);
+
+  const parts = [];
+  if (result.updated.length) parts.push(`${result.updated.length}개 갱신됨`);
+  if (result.failed.length) parts.push(`${result.failed.length}개 실패`);
+  if (result.skipped.length) parts.push(`KIS 코드 없음 ${result.skipped.length}개는 건너뜀`);
+  if (parts.length === 0) {
+    ctx.showToast('KIS 종목코드가 설정된 종목이 없습니다.');
+    return;
+  }
+  el.refreshAllQuotesHint.hidden = false;
+  el.refreshAllQuotesHint.textContent = parts.join(' · ');
+  ctx.showToast('주가를 갱신했습니다.');
+}

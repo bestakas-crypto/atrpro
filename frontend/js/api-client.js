@@ -77,6 +77,7 @@ async function request(method, path, body, { _retriedAuth = false } = {}) {
 
 export const api = {
   getDashboard: () => request('GET', '/api/v1/dashboard'),
+  refreshAllQuotes: () => request('POST', '/api/v1/dashboard/refresh-quotes'),
 
   createInstrument: (body) => request('POST', '/api/v1/instruments', body),
   getInstrument: (id) => request('GET', `/api/v1/instruments/${id}`),

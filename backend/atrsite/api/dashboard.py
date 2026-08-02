@@ -18,6 +18,13 @@ def get_dashboard(conn: sqlite3.Connection = Depends(get_conn)):
     return portfolio_service.build_dashboard(conn)
 
 
+@router.post("/dashboard/refresh-quotes")
+def refresh_all_quotes(conn: sqlite3.Connection = Depends(get_conn)):
+    """목록 화면 "주가 갱신" 버튼 -- KIS 종목코드가 있는 종목 전부를 한 번에
+    갱신한다 (2026-08-02 추가)."""
+    return portfolio_service.refresh_all_quotes_now(conn)
+
+
 @router.get("/fx")
 def get_fx(conn: sqlite3.Connection = Depends(get_conn)):
     return {"rates": fx_repo.list_rates(conn), "display_currency": fx_repo.get_display_currency(conn)}

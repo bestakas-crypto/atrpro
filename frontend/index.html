@@ -38,8 +38,9 @@
     <div class="list-toolbar">
       <button id="btn-add-stock" class="btn btn-primary">+ 종목 추가</button>
       <button id="btn-add-deposit" class="btn btn-primary">+ 예금 추가</button>
-      <button id="btn-open-import" class="btn btn-secondary">가져오기</button>
+      <button id="btn-refresh-all-quotes" class="btn btn-secondary">주가 갱신</button>
     </div>
+    <p id="refresh-all-quotes-hint" class="inline-result" hidden></p>
 
     <div class="total-summary-block">
       <button id="btn-toggle-total" class="total-summary-toggle">
@@ -72,6 +73,7 @@
           <button type="button" id="btn-fx-save" class="btn btn-secondary btn-block">수동 입력 환율 저장</button>
         </div>
       </div>
+      <button type="button" id="btn-open-import" class="link-btn">기존 데이터 가져오기 (최초 1회용)</button>
     </div>
 
     <div id="stock-list" class="stock-list"></div>

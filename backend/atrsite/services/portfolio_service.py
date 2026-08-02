@@ -364,6 +364,31 @@ def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str,
     )
 
 
+def refresh_all_quotes_now(conn: sqlite3.Connection) -> dict[str, Any]:
+    """목록 화면의 "주가 갱신" 버튼 -- KIS 종목코드가 설정된 종목 전부를 한 번에
+    갱신한다 (2026-08-02 추가). 종목 하나가 실패해도(코드 오류, 상장폐지 등)
+    나머지는 계속 진행하고, 끝나면 결과를 요약해서 돌려준다.
+
+    KisClient.rate_limiter가 이미 호출 사이 최소 간격을 강제하므로(스펙 11.2)
+    여기서 별도로 속도를 조절할 필요는 없다.
+    """
+    updated: list[str] = []
+    skipped: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    for instrument in instruments_repo.list_instruments(conn):
+        if not instrument["kis_code"]:
+            skipped.append(instrument["name"])
+            continue
+        try:
+            refresh_quote_now(conn, instrument["id"])
+            updated.append(instrument["name"])
+        except RefreshQuoteError as exc:
+            failed.append({"name": instrument["name"], "error": str(exc)})
+
+    return {"updated": updated, "skipped": skipped, "failed": failed}
+
+
 def commit_manual_atr(
     conn: sqlite3.Connection, instrument_id: str, *, atr: float, trade_date: str
 ) -> dict[str, Any]:

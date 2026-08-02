@@ -6,6 +6,7 @@ import pytest
 from atrsite.repositories import deposits as deposits_repo
 from atrsite.repositories import fx as fx_repo
 from atrsite.repositories import instruments as instruments_repo
+from atrsite.repositories import market_data as market_data_repo
 from atrsite.repositories import position as position_repo
 from atrsite.repositories import trades as trades_repo
 from atrsite.services import portfolio_service
@@ -350,3 +351,17 @@ def test_refresh_quote_now_commits_dummy_quote_when_kis_code_set(db_conn, force_
     snapshot = portfolio_service.instrument_snapshot(db_conn, inst["id"])
     assert snapshot["quote"]["source"] == "kis"
     assert snapshot["quote"]["data_status"] == "FRESH"
+
+
+def test_refresh_all_quotes_now_updates_only_instruments_with_kis_code(db_conn, force_kis_dummy_mode):
+    with_code = _make_instrument(db_conn, name="코드있음")
+    instruments_repo.update_settings(db_conn, with_code["id"], kis_code="005930", kis_market="KRX")
+    without_code = _make_instrument(db_conn, name="코드없음")
+
+    result = portfolio_service.refresh_all_quotes_now(db_conn)
+    assert result["updated"] == ["코드있음"]
+    assert result["skipped"] == ["코드없음"]
+    assert result["failed"] == []
+
+    assert market_data_repo.get_quote(db_conn, with_code["id"])["source"] == "kis"
+    assert market_data_repo.get_quote(db_conn, without_code["id"]) is None

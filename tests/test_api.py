@@ -211,6 +211,26 @@ def test_refresh_quote_succeeds_with_dummy_kis_when_code_set(client):
         object.__setattr__(settings, "kis_app_secret", original_secret)
 
 
+def test_refresh_all_quotes(client):
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        client.post("/api/v1/instruments", json={"name": "코드있음", "kis_code": "005930"})
+        client.post("/api/v1/instruments", json={"name": "코드없음"})
+
+        resp = client.post("/api/v1/dashboard/refresh-quotes")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["updated"] == ["코드있음"]
+        assert body["skipped"] == ["코드없음"]
+        assert body["failed"] == []
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
 def test_api_key_enforced_when_configured(client):
     from atrsite.config import settings
     object.__setattr__(settings, "api_key", "secret123")
