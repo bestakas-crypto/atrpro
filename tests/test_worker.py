@@ -1,12 +1,29 @@
 """worker.py 파이프라인 테스트 -- 3단계 목표: 더미 시세->ATR->신호가 텔레그램
 연결 없이도 끊김 없이 돌아가는지 확인한다 (프롬프트 3단계 지시).
+
+이 개발 환경의 .env에는 이제 실제 KIS 자격증명이 들어 있으므로(4단계 이후
+실전 계좌 연동), 아래 autouse 픽스처로 매 테스트마다 강제로 더미 모드를
+켠다 -- 안 그러면 이 테스트들이 실제 KIS 서버에 접속을 시도하게 된다.
 """
+import pytest
+
 from datetime import datetime
 
 from atrsite import worker
+from atrsite.config import settings
 from atrsite.repositories import instruments as instruments_repo
 from atrsite.repositories import market_data as market_data_repo
 from atrsite.repositories import signals as signals_repo
+
+
+@pytest.fixture(autouse=True)
+def force_kis_dummy_mode():
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    yield
+    object.__setattr__(settings, "kis_app_key", original_key)
+    object.__setattr__(settings, "kis_app_secret", original_secret)
 
 
 def _make_instrument_with_kis_code(conn, **overrides):

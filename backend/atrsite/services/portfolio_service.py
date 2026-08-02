@@ -306,25 +306,62 @@ def _reconcile_after_trade_change(conn: sqlite3.Connection, instrument_id: str) 
 
 def commit_quote(
     conn: sqlite3.Connection, instrument_id: str, *, price: float, quoted_at: Optional[str] = None,
-    source: str = "manual", data_status: str = "MANUAL_OVERRIDE",
+    source: str = "manual", data_status: str = "MANUAL_OVERRIDE", day_high: Optional[float] = None,
 ) -> dict[str, Any]:
     """현재가 반영 -- 스펙 13.2 "수동 보정"(2단계) 및 worker.py의 KIS 자동 조회(3단계)
     양쪽에서 공유하는 진입점. source/data_status로 둘을 구분한다
     ("manual"/MANUAL_OVERRIDE vs "kis"/FRESH 등).
 
-    자동 최고가 갱신(autoUpdateHigh)이 켜져 있고 새 현재가가 기존 최고가보다
-    높으면 최고가를 갱신한 뒤 레칫을 다시 계산한다 (기존 앱 commitCurrentPrice와 동일한 의미).
+    자동 최고가 갱신(autoUpdateHigh)이 켜져 있으면 max(현재가, 당일고가)와 기존
+    최고가를 비교해서 갱신한다 -- 스펙 11.3 "현재가와 당일 고가 조회"를 반영:
+    조회 시점 사이에 순간적으로 더 높이 찍고 내려온 가격도 최고가로 잡아야
+    손절선이 부당하게 낮게 유지되지 않는다. day_high가 없으면(수동 입력)
+    price만 본다.
     """
     market_data_repo.upsert_quote(conn, instrument_id, price=price, source=source,
                                    data_status=data_status, quoted_at=quoted_at)
     instrument = instruments_repo.get_instrument(conn, instrument_id)
+    high_candidate = max(price, day_high) if day_high is not None else price
     if instrument["auto_update_high"] and (
-        instrument["post_entry_high_price"] is None or price > instrument["post_entry_high_price"]
+        instrument["post_entry_high_price"] is None or high_candidate > instrument["post_entry_high_price"]
     ):
-        instruments_repo.update_manual_fields(conn, instrument_id, post_entry_high_price=price)
+        instruments_repo.update_manual_fields(conn, instrument_id, post_entry_high_price=high_candidate)
         _apply_ratchet(conn, instrument_id)
     recompute_signal(conn, instrument_id)
     return instruments_repo.get_instrument(conn, instrument_id)  # type: ignore[return-value]
+
+
+class RefreshQuoteError(ValueError):
+    """온디맨드 시세 갱신을 진행할 수 없을 때(kis_code 미설정 등) 발생.
+    API 계층에서 이 예외를 잡아 HTTP 400으로 매핑한다."""
+
+
+def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any]:
+    """사용자가 "지금 시세 가져오기"를 눌렀을 때 -- worker.py의 5분 폴링과 별개로
+    즉시 KIS에서 현재가를 1회 조회해서 반영한다 (2026-08-02 추가).
+
+    ATR/일봉은 여기서 건드리지 않는다 -- 확정 일봉 기반 ATR을 장중에 임의로
+    다시 계산하면 스펙 8.5 "장중에는 확정된 ATR로만 기준선을 계산" 원칙이
+    깨지기 때문. 이 함수는 순수하게 현재가만 갱신한다.
+    """
+    from ..adapters.kis_client import KisApiError, get_client  # 지역 임포트: adapters -> services 방향 유지
+
+    instrument = instruments_repo.get_instrument(conn, instrument_id)
+    if instrument is None:
+        raise RefreshQuoteError(f"instrument not found: {instrument_id}")
+    if not instrument["kis_code"]:
+        raise RefreshQuoteError("이 종목에는 KIS 종목코드가 설정되어 있지 않습니다. 종목 설정에서 먼저 입력하세요.")
+
+    client = get_client()
+    try:
+        quote = client.get_current_price(instrument["kis_code"])
+    except KisApiError as exc:
+        raise RefreshQuoteError(f"KIS 시세 조회 실패: {exc}") from exc
+
+    return commit_quote(
+        conn, instrument_id, price=quote.price, quoted_at=quote.quoted_at,
+        source="kis", data_status="FRESH", day_high=quote.day_high,
+    )
 
 
 def commit_manual_atr(

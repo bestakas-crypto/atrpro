@@ -301,3 +301,52 @@ def test_acknowledge_does_not_change_computed_status_or_thresholds(db_conn):
 
     assert after["signal"]["status"] == before["signal"]["status"] == "STOP_TRIGGERED"
     assert after["instrument"]["trailing_stop_price"] == before["instrument"]["trailing_stop_price"]
+
+
+# ---------------------------------------------------------------------------
+# 온디맨드 시세 갱신(refresh_quote_now) + day_high 반영 (2026-08-02 추가)
+# ---------------------------------------------------------------------------
+
+def test_commit_quote_uses_day_high_for_auto_update_when_higher_than_price(db_conn):
+    """장중 순간적으로 더 높이 찍고 내려온 경우, 현재가보다 당일고가를
+    최고가 갱신 기준으로 써야 한다 (스펙 11.3)."""
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    updated = portfolio_service.commit_quote(db_conn, inst["id"], price=105, day_high=110)
+    assert updated["post_entry_high_price"] == pytest.approx(110)
+
+
+def test_commit_quote_without_day_high_falls_back_to_price(db_conn):
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    updated = portfolio_service.commit_quote(db_conn, inst["id"], price=105)  # 수동 입력, day_high 없음
+    assert updated["post_entry_high_price"] == pytest.approx(105)
+
+
+@pytest.fixture()
+def force_kis_dummy_mode():
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    yield
+    object.__setattr__(settings, "kis_app_key", original_key)
+    object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
+def test_refresh_quote_now_requires_kis_code(db_conn, force_kis_dummy_mode):
+    inst = _make_instrument(db_conn)  # kis_code 미설정
+    with pytest.raises(portfolio_service.RefreshQuoteError):
+        portfolio_service.refresh_quote_now(db_conn, inst["id"])
+
+
+def test_refresh_quote_now_commits_dummy_quote_when_kis_code_set(db_conn, force_kis_dummy_mode):
+    inst = _make_instrument(db_conn)
+    instruments_repo.update_settings(db_conn, inst["id"], kis_code="005930", kis_market="KRX")
+
+    updated = portfolio_service.refresh_quote_now(db_conn, inst["id"])
+    assert updated is not None
+
+    snapshot = portfolio_service.instrument_snapshot(db_conn, inst["id"])
+    assert snapshot["quote"]["source"] == "kis"
+    assert snapshot["quote"]["data_status"] == "FRESH"

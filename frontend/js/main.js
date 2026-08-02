@@ -7,7 +7,7 @@ import { loadAndRenderList, autoFetchFxRates } from './dashboard.js';
 import {
   loadAndRenderDetail, renderDetail, updateCustomPctResult, commitCurrentPrice, commitAtr,
   commitPostHigh, commitAutoUpdateHigh, handleSaveSettings, handleResetStock, handleDeleteStock,
-  handleQuickDeleteStock, acknowledgeSignal,
+  handleQuickDeleteStock, acknowledgeSignal, refreshQuoteNow,
 } from './instrument-detail.js';
 import { openTxModal, closeTxModal, handleTxSave, handleTxDelete, handleAddStockSave } from './trade-form.js';
 import { openAddDepositModal, openEditDepositModal, closeDepositModal, handleDepositSave, handleDepositDelete } from './deposits.js';
@@ -27,12 +27,14 @@ function cacheDom() {
     'view-detail', 'd-avg-price', 'd-qty', 'd-cost-basis', 'd-pnl',
     'signal-banner', 'signal-text', 'btn-signal-acknowledge', 'signal-acknowledged-note',
     'input-current-price', 'input-atr', 'input-post-high', 'input-auto-update-high',
+    'btn-refresh-quote', 'refresh-quote-hint',
     'd-next-buy', 'd-take-profit', 'd-trailing-stop',
     'drawdown-current-line', 'btn-toggle-drawdown', 'drawdown-table-wrap', 'drawdown-body',
     'partial-sell-body', 'input-custom-pct', 'custom-pct-result',
     'tx-body', 'tx-empty', 'btn-toggle-tx-all',
     'settings-details', 'settings-name', 'settings-currency', 'settings-buy-mult', 'settings-sell-mult',
-    'settings-stop-mult', 'btn-save-settings', 'btn-reset-stock', 'btn-delete-stock',
+    'settings-stop-mult', 'settings-tranche-amount', 'settings-kis-code',
+    'btn-save-settings', 'btn-reset-stock', 'btn-delete-stock',
     'sticky-actions', 'btn-open-buy', 'btn-open-sell',
     'modal-tx', 'modal-tx-title', 'tx-executed-at', 'tx-price', 'tx-qty', 'tx-fee', 'tx-tax', 'tx-memo',
     'btn-tx-delete', 'btn-tx-cancel', 'btn-tx-save',
@@ -214,6 +216,7 @@ function bindEvents() {
 
   el.inputCurrentPrice.addEventListener('input', () => renderDetail(ctx));
   el.inputCurrentPrice.addEventListener('change', () => commitCurrentPrice(ctx));
+  el.btnRefreshQuote.addEventListener('click', () => refreshQuoteNow(ctx));
   el.inputAtr.addEventListener('input', () => renderDetail(ctx));
   el.inputAtr.addEventListener('change', () => commitAtr(ctx));
   el.inputPostHigh.addEventListener('change', () => commitPostHigh(ctx));

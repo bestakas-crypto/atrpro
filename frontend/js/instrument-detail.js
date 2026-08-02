@@ -270,9 +270,33 @@ function renderSettingsFields(ctx, instrument) {
   el.settingsBuyMult.value = instrument.buy_multiple;
   el.settingsSellMult.value = instrument.sell_multiple;
   el.settingsStopMult.value = instrument.stop_multiple;
+  el.settingsTrancheAmount.value = instrument.tranche_amount != null ? instrument.tranche_amount : '';
+  el.settingsKisCode.value = instrument.kis_code || '';
+  el.btnRefreshQuote.disabled = !instrument.kis_code;
+  el.refreshQuoteHint.textContent = instrument.kis_code
+    ? ''
+    : '종목 설정에서 KIS 종목코드를 먼저 입력하세요.';
 }
 
 // ---------- 커밋 핸들러 (현재가/ATR/최고가 입력 -> 서버 저장 -> 재조회) ----------
+
+export async function refreshQuoteNow(ctx) {
+  const { el, state } = ctx;
+  if (!state.currentInstrument) return;
+  const instrumentId = state.currentInstrument.instrument.id;
+  el.btnRefreshQuote.disabled = true;
+  el.btnRefreshQuote.textContent = '가져오는 중...';
+  try {
+    await api.refreshQuote(instrumentId);
+  } catch (e) {
+    ctx.showToast('시세 가져오기 실패: ' + e.message);
+    return;
+  } finally {
+    el.btnRefreshQuote.textContent = '지금 시세 가져오기';
+  }
+  await loadAndRenderDetail(ctx, instrumentId);
+  ctx.showToast('시세를 가져왔습니다.');
+}
 
 export async function commitCurrentPrice(ctx) {
   const { el, state } = ctx;
@@ -344,6 +368,8 @@ export async function handleSaveSettings(ctx) {
     buy_multiple: num(el.settingsBuyMult.value),
     sell_multiple: num(el.settingsSellMult.value),
     stop_multiple: num(el.settingsStopMult.value),
+    tranche_amount: num(el.settingsTrancheAmount.value),
+    kis_code: el.settingsKisCode.value.trim() || null,
   };
   try {
     await api.updateInstrumentSettings(state.currentInstrument.instrument.id, body);

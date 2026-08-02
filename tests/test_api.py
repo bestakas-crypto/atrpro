@@ -181,6 +181,36 @@ def test_acknowledge_signal_404_for_unknown_instrument(client):
     assert resp.status_code == 404
 
 
+def test_refresh_quote_requires_kis_code(client):
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        inst = client.post("/api/v1/instruments", json={"name": "테스트"}).json()
+        resp = client.post(f"/api/v1/instruments/{inst['id']}/quote/refresh")
+        assert resp.status_code == 400
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
+def test_refresh_quote_succeeds_with_dummy_kis_when_code_set(client):
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        inst = client.post("/api/v1/instruments", json={"name": "테스트", "kis_code": "005930", "kis_market": "KRX"}).json()
+        resp = client.post(f"/api/v1/instruments/{inst['id']}/quote/refresh")
+        assert resp.status_code == 200
+        detail = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail["quote"]["source"] == "kis"
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
 def test_api_key_enforced_when_configured(client):
     from atrsite.config import settings
     object.__setattr__(settings, "api_key", "secret123")

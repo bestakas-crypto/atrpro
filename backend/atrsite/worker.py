@@ -54,7 +54,7 @@ def poll_quotes(conn: sqlite3.Connection) -> None:
             continue
         portfolio_service.commit_quote(
             conn, instrument["id"], price=quote.price, quoted_at=quote.quoted_at,
-            source="kis", data_status="FRESH",
+            source="kis", data_status="FRESH", day_high=quote.day_high,
         )
         logger.info("현재가 반영 %s: %s", instrument["name"], quote.price)
 

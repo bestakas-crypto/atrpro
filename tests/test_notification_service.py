@@ -1,17 +1,30 @@
 """notification_service + telegram_client 테스트 -- 스펙 12절.
 
-Bot Token/Chat ID가 .env에 없는 이 개발 환경에서는 telegram_client가 항상
-더미 모드로 동작하므로(프롬프트 4단계 지시), 재시도/백오프 경로는
-send_message 자체를 monkeypatch해서 검증한다.
+이 개발 환경의 .env에는 이제 실제 텔레그램 봇 토큰/채팅ID가 들어 있으므로
+(4단계 이후 실제 알림 연동), 아래 autouse 픽스처로 매 테스트마다 강제로
+더미 모드를 켠다 -- 안 그러면 pytest를 돌릴 때마다 사용자의 실제 텔레그램으로
+가짜 매매 신호 메시지가 발송된다. 재시도/백오프 경로는 send_message 자체를
+monkeypatch해서 검증한다.
 """
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from atrsite.adapters import telegram_client
+from atrsite.config import settings
 from atrsite.repositories import notifications as notifications_repo
 from atrsite.services import notification_service, portfolio_service
 from atrsite.services.signal_engine import SignalStatus
+
+
+@pytest.fixture(autouse=True)
+def force_telegram_dummy_mode():
+    original_token, original_chat = settings.telegram_bot_token, settings.telegram_chat_id
+    object.__setattr__(settings, "telegram_bot_token", "")
+    object.__setattr__(settings, "telegram_chat_id", "")
+    yield
+    object.__setattr__(settings, "telegram_bot_token", original_token)
+    object.__setattr__(settings, "telegram_chat_id", original_chat)
 
 
 def _make_instrument_with_position(conn, **overrides):

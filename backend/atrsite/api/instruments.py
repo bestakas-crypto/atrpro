@@ -80,6 +80,16 @@ def commit_quote(instrument_id: str, body: QuoteCommit, conn: sqlite3.Connection
     return portfolio_service.commit_quote(conn, instrument_id, price=body.price)
 
 
+@router.post("/{instrument_id}/quote/refresh")
+def refresh_quote(instrument_id: str, conn: sqlite3.Connection = Depends(get_conn)):
+    """사용자가 "지금 시세 가져오기"를 눌렀을 때 -- worker.py의 5분 주기와
+    별개로 즉시 KIS에서 현재가를 1회 조회한다 (2026-08-02 추가)."""
+    try:
+        return portfolio_service.refresh_quote_now(conn, instrument_id)
+    except portfolio_service.RefreshQuoteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/{instrument_id}/atr")
 def commit_atr(instrument_id: str, body: AtrCommit, conn: sqlite3.Connection = Depends(get_conn)):
     if instruments_repo.get_instrument(conn, instrument_id) is None:

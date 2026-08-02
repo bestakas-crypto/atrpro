@@ -3,9 +3,16 @@
 인증/토큰 처리(TokenCache)와 요청 패턴(_headers, rt_cd 검사)은
 C:\\mmean\\core\\kis_data_api.py의 검증된 방식을 strpro 스타일로 다시 작성한
 것이다 (그대로 복사하지 않음 -- 두 프로젝트는 계속 독립적으로 유지).
-시세 조회 TR 자체(get_current_price/get_daily_bars의 실제 호출 본문)는 아직
-TODO다: 이 저장소에는 실거래 계좌가 없어 응답 스키마를 실제로 찍어볼 수
-없으므로, 사용자가 검증된 연결 코드를 직접 붙여넣을 자리로 남겨둔다.
+
+시세 조회 TR(get_current_price/get_daily_bars)은 C:\\strpro\\manual의 실제
+명세("주식현재가 시세[v1_국내주식-008]", "국내주식기간별시세(일_주_월_년)
+[v1_국내주식-016]")를 그대로 따라 구현했고, 2026-08-02 사용자의 실전 계좌로
+실제 KIS 서버에 대고 토큰 발급 + 시세 조회까지 확인함.
+
+telegram_client.py와 동일한 더미 모드 패턴: KIS_APP_KEY/KIS_APP_SECRET이
+.env에 없으면(로컬 개발/테스트 기본값) 실제 호출 대신 결정론적 더미 데이터를
+반환한다 -- pytest가 실제 KIS 서버나 유효한 자격증명 없이도 항상 통과해야
+하기 때문이다.
 """
 from __future__ import annotations
 
@@ -26,16 +33,25 @@ KIS_BASE_LIVE = "https://openapi.koreainvestment.com:9443"
 KIS_BASE_VIRTUAL = "https://openapivts.koreainvestment.com:29443"
 OAUTH_TOKEN_PATH = "/oauth2/tokenP"
 
-# C:\strpro\manual의 TR 명세 문서로 이미 확인된 값 (재조사 불필요, 스펙 3단계 지시).
-# 실제 요청 파라미터/응답 필드 매핑은 아직 채우지 않았다 -- 아래 TODO 참고.
+# C:\strpro\manual의 TR 명세 문서로 확인된 값.
 TR_CURRENT_PRICE = "FHKST01010100"  # 주식현재가 시세 [v1_국내주식-008]
 EP_CURRENT_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price"
 TR_DAILY_CHART_PRICE = "FHKST03010100"  # 국내주식기간별시세(일_주_월_년) [v1_국내주식-016]
 EP_DAILY_CHART_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 
+# FID_COND_MRKT_DIV_CODE -- "J:KRX, NX:NXT, UN:통합" (명세 그대로). 국내 상장
+# 종목은 KRX 기준으로 조회한다.
+FID_MARKET_DIV_KRX = "J"
+
 
 class KisApiError(RuntimeError):
     """rt_cd != '0' 등 KIS API가 명시적으로 실패를 반환했을 때 발생."""
+
+
+def is_dummy_mode() -> bool:
+    """텔레그램 클라이언트와 동일한 원칙 -- 자격증명이 없으면 실제 호출 대신
+    더미 데이터를 쓴다(테스트/로컬 개발이 실제 KIS 서버에 의존하지 않게)."""
+    return not settings.kis_app_key or not settings.kis_app_secret
 
 
 @dataclass(frozen=True)
@@ -131,31 +147,91 @@ class KisClient:
         }
 
     def get_current_price(self, instrument_code: str) -> Quote:
-        """
-        TODO: manual 폴더의 "주식현재가 시세[v1_국내주식-008]" 명세
-        (TR FHKST01010100, GET /uapi/domestic-stock/v1/quotations/inquire-price)와
-        C:\\mmean의 인증/요청 패턴(_headers, rt_cd 검사)을 참고해서 실제
-        KIS 시세조회 TR 호출 코드를 채울 것.
-        임시로는 테스트용 더미 데이터를 반환하도록 구현해서 나머지
-        파이프라인(ATR 계산, 신호 판정)이 이 함수 결과만으로 정상 동작하는지
-        먼저 검증할 것.
+        """주식현재가 시세 [v1_국내주식-008] (TR FHKST01010100).
+
+        manual 폴더 명세 그대로: 요청은 FID_COND_MRKT_DIV_CODE(J)+FID_INPUT_ISCD,
+        응답 output.stck_prpr(현재가)/output.stck_hgpr(당일 최고가)를 쓴다.
         """
         self.rate_limiter.wait()
-        return _dummy_quote(instrument_code)
+        if is_dummy_mode():
+            return _dummy_quote(instrument_code)
+
+        res = self._http.get(
+            self._base_url() + EP_CURRENT_PRICE,
+            headers=self._headers(TR_CURRENT_PRICE),
+            params={"FID_COND_MRKT_DIV_CODE": FID_MARKET_DIV_KRX, "FID_INPUT_ISCD": instrument_code},
+            timeout=10,
+        )
+        res.raise_for_status()
+        body = res.json()
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"현재가 조회 실패 code={instrument_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+        output = body.get("output") or {}
+        try:
+            price = float(output["stck_prpr"])
+            day_high = float(output["stck_hgpr"])
+        except (KeyError, ValueError) as exc:
+            raise KisApiError(f"현재가 응답 형식 이상 code={instrument_code}: {output}") from exc
+
+        return Quote(
+            instrument_code=instrument_code,
+            price=price,
+            day_high=day_high,
+            quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
 
     def get_daily_bars(self, instrument_code: str, start_date: str, end_date: str) -> list[DailyBar]:
-        """
-        TODO: manual 폴더의 "국내주식기간별시세(일_주_월_년)[v1_국내주식-016]"
-        명세 (TR FHKST03010100, GET
-        /uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice,
-        FID_ORG_ADJ_PRC=0 수정주가, FID_PERIOD_DIV_CODE=D 일봉)와 C:\\mmean의
-        요청 패턴을 참고해서 실제 확정 일봉 조회 코드를 채울 것.
-        임시로는 테스트용 더미 데이터(atr_engine.DailyBar 리스트, 최소 15개
-        이상)를 반환하도록 구현해서 ATR 계산 파이프라인이 이 함수 결과만으로
-        정상 동작하는지 먼저 검증할 것.
+        """국내주식기간별시세(일_주_월_년) [v1_국내주식-016] (TR FHKST03010100).
+
+        manual 폴더 명세 그대로: FID_PERIOD_DIV_CODE=D(일봉), FID_ORG_ADJ_PRC=0
+        (수정주가), FID_INPUT_DATE_1/2는 YYYYMMDD(하이픈 없음). 응답 output2가
+        확정 일봉 배열(한 번에 최대 100건, 최신순으로 온다고 명세에 나와 있어
+        날짜 오름차순으로 다시 정렬한다 -- atr_engine이 과거->최신 순서를
+        전제로 하기 때문).
         """
         self.rate_limiter.wait()
-        return _dummy_daily_bars(instrument_code, start_date, end_date)
+        if is_dummy_mode():
+            return _dummy_daily_bars(instrument_code, start_date, end_date)
+
+        res = self._http.get(
+            self._base_url() + EP_DAILY_CHART_PRICE,
+            headers=self._headers(TR_DAILY_CHART_PRICE),
+            params={
+                "FID_COND_MRKT_DIV_CODE": FID_MARKET_DIV_KRX,
+                "FID_INPUT_ISCD": instrument_code,
+                "FID_INPUT_DATE_1": start_date.replace("-", ""),
+                "FID_INPUT_DATE_2": end_date.replace("-", ""),
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            },
+            timeout=10,
+        )
+        res.raise_for_status()
+        body = res.json()
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"일봉 조회 실패 code={instrument_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+
+        bars: list[DailyBar] = []
+        for row in body.get("output2") or []:
+            raw_date = row.get("stck_bsop_date")
+            if not raw_date:
+                continue  # 명세상 영업일 없는 빈 행이 섞여 나올 수 있음
+            try:
+                bars.append(DailyBar(
+                    trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                    high=float(row["stck_hgpr"]),
+                    low=float(row["stck_lwpr"]),
+                    close=float(row["stck_clpr"]),
+                ))
+            except (KeyError, ValueError) as exc:
+                raise KisApiError(f"일봉 응답 형식 이상 code={instrument_code}: {row}") from exc
+
+        bars.sort(key=lambda b: b.trade_date)
+        return bars
 
     def close(self) -> None:
         self._http.close()

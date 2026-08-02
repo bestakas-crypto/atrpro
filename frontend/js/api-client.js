@@ -83,6 +83,7 @@ export const api = {
   updateInstrumentSettings: (id, body) => request('PATCH', `/api/v1/instruments/${id}`, body),
   updateInstrumentManual: (id, body) => request('PATCH', `/api/v1/instruments/${id}/manual`, body),
   commitQuote: (id, price) => request('POST', `/api/v1/instruments/${id}/quote`, { price }),
+  refreshQuote: (id) => request('POST', `/api/v1/instruments/${id}/quote/refresh`),
   commitAtr: (id, atr, tradeDate) => request('POST', `/api/v1/instruments/${id}/atr`, { atr, trade_date: tradeDate }),
   resetInstrument: (id) => request('POST', `/api/v1/instruments/${id}/reset`),
   deleteInstrument: (id) => request('DELETE', `/api/v1/instruments/${id}`),
