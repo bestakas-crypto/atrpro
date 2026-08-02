@@ -64,6 +64,11 @@ const state = {
   editingTradeId: null,
   editingDepositId: null,
   confirmCallback: null,
+  // TOTAL: 전체 통화를 원화로 환산한 합계(서버 계산). KRW/USD: 그 통화로만
+  // 보유한 종목/예금만 걸러서 환산 없이 보여줌(클라이언트에서 계산) --
+  // 2026-08-02 사용자 요청으로 3버튼(TOTAL/KRW/USD) 체계로 변경, JPY는
+  // 별도 버튼 없이 TOTAL에서만 환산 포함.
+  currencyMode: 'TOTAL',
 };
 
 let toastTimer = null;
@@ -183,7 +188,13 @@ function bindEvents() {
   el.currencySwitch.addEventListener('click', async (e) => {
     const btn = e.target.closest('.currency-pill');
     if (!btn) return;
-    await api.putFx({ display_currency: btn.dataset.currency });
+    state.currencyMode = btn.dataset.currency;
+    if (state.currencyMode === 'TOTAL') {
+      // TOTAL은 항상 원화 환산 합계 -- 서버가 KRW 기준으로 계산하게 한다.
+      await api.putFx({ display_currency: 'KRW' });
+    }
+    // KRW/USD는 환산 없이 그 통화 종목만 걸러 보여주는 클라이언트 계산이라
+    // 서버 호출 없이 다시 그리기만 하면 된다.
     loadAndRenderList(ctx);
   });
 

@@ -43,6 +43,12 @@ export async function loadAndRenderList(ctx) {
     ctx.showToast('대시보드를 불러오지 못했습니다: ' + e.message);
     return;
   }
+  // TOTAL은 항상 원화 환산 기준이어야 한다 -- 예전 KRW/USD/JPY 3버튼 시절
+  // 저장된 display_currency가 KRW가 아닌 채로 남아있을 수 있어 자가교정한다.
+  if (ctx.state.currencyMode === 'TOTAL' && dashboard.fx.display_currency !== 'KRW') {
+    await api.putFx({ display_currency: 'KRW' });
+    dashboard = await api.getDashboard();
+  }
   ctx.setOfflineState(!!dashboard.__offline, dashboard.__syncedAt);
   renderList(ctx, dashboard);
 }
@@ -152,10 +158,65 @@ function renderDepositList(ctx, deposits) {
   });
 }
 
+// KRW/USD 모드 -- 환산 없이 그 통화로만 보유한 종목/예금만 걸러서 합산한다
+// (2026-08-02 추가). TOTAL은 서버가 이미 원화로 환산해서 계산해주므로
+// dashboard.totals를 그대로 쓰면 되지만, KRW/USD는 "그 통화 자산만" 보는
+// 용도라 서버 왕복 없이 클라이언트에서 필터링한다.
+function computeNativeTotals(dashboard, currency) {
+  const instruments = dashboard.instruments.filter((row) => row.instrument.currency === currency);
+  const deposits = dashboard.deposits.filter((d) => d.currency === currency);
+
+  let costBasis = 0;
+  let evalTotal = 0;
+  let evalKnownCount = 0;
+  let missingEvalPriceCount = 0;
+  instruments.forEach((row) => {
+    costBasis += row.cost_basis;
+    if (row.eval_value != null) {
+      evalTotal += row.eval_value;
+      evalKnownCount += 1;
+    } else {
+      missingEvalPriceCount += 1;
+    }
+  });
+
+  let depositTotal = 0;
+  deposits.forEach((d) => { depositTotal += d.amount; });
+
+  const evalContribution = evalKnownCount > 0 ? evalTotal : 0;
+  const assetTotal = evalContribution + depositTotal;
+
+  let pnlAmount = null;
+  let pnlPct = null;
+  if (evalKnownCount > 0 && costBasis > 0) {
+    pnlAmount = evalTotal - costBasis;
+    pnlPct = (pnlAmount / costBasis) * 100;
+  }
+
+  return {
+    instruments,
+    deposits,
+    totals: {
+      cost_basis: costBasis,
+      missing_cost_count: 0,
+      eval_value: evalKnownCount > 0 ? evalTotal : null,
+      missing_eval_price_count: missingEvalPriceCount,
+      missing_eval_fx_count: 0,
+      deposit_total: depositTotal,
+      missing_deposit_fx_count: 0,
+      asset_total: assetTotal,
+      pnl_amount: pnlAmount,
+      pnl_pct: pnlPct,
+    },
+    fx: dashboard.fx,
+  };
+}
+
 function renderTotals(ctx, dashboard) {
   const { el } = ctx;
-  const { totals, fx } = dashboard;
-  const displayCurrency = fx.display_currency;
+  const mode = ctx.state.currencyMode;
+  const view = mode === 'TOTAL' ? dashboard : computeNativeTotals(dashboard, mode);
+  const { totals, fx } = view;
 
   el.totalCostSum.textContent = formatMoney(totals.cost_basis);
   el.totalEvalSum.textContent = totals.eval_value != null ? formatMoney(totals.eval_value) : '-';
@@ -190,13 +251,13 @@ function renderTotals(ctx, dashboard) {
   }
 
   document.querySelectorAll('.currency-pill').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.currency === displayCurrency);
+    btn.classList.toggle('active', btn.dataset.currency === mode);
   });
 
   el.totalSummaryDetail.hidden = !ctx.state.showTotalDetail;
   el.totalChevron.classList.toggle('open', ctx.state.showTotalDetail);
   if (ctx.state.showTotalDetail) {
-    renderTotalDetailRows(ctx, dashboard);
+    renderTotalDetailRows(ctx, view);
     renderFxSettings(ctx, fx);
   }
 }

@@ -2,7 +2,7 @@
 //   /api/            -> Network Only (캐시 저장 금지, 실패 시 index.html로 대체하지 않음)
 //   페이지 이동(navigate) -> Network First, 실패 시 캐시된 index.html
 //   정적 CSS/JS/아이콘/매니페스트 -> Network First + 캐시 갱신 (오프라인 시 캐시 폴백)
-const CACHE_NAME = 'atrsite-pro-cache-v4';
+const CACHE_NAME = 'atrsite-pro-cache-v5';
 const PRECACHE_URLS = [
   './',
   './index.html',
