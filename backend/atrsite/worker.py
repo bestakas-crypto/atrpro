@@ -87,8 +87,17 @@ def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
         logger.info("ATR 갱신 %s: %s (%s)", instrument["name"], point.atr, point.trade_date)
 
 
+# POST_MARKET은 장마감(15:30)부터 자정까지 몇 시간이나 이어지고, 그 사이
+# IDLE_POLL_INTERVAL_SECONDS(60초)마다 run_once()가 반복 호출된다. 이 가드가
+# 없으면 하루치 확정 일봉/ATR을 이미 다 반영해놓고도 자정까지 매분 KIS에
+# 똑같은 일봉 조회를 수백 번 반복하게 된다 -- 날짜가 바뀌면(다음 거래일
+# POST_MARKET) 자동으로 다시 수집하도록 날짜만 기억한다.
+_last_daily_bars_collection_date: date | None = None
+
+
 def run_once(now: datetime | None = None) -> MarketPhase:
     """폴링 결정 1회 실행 -- 테스트와 `--once` 모드가 공유하는 진입점."""
+    global _last_daily_bars_collection_date
     now = now or datetime.now()
     decision = decide_polling(now)
     logger.info("phase=%s reason=%s", decision.phase.value, decision.reason)
@@ -98,8 +107,9 @@ def run_once(now: datetime | None = None) -> MarketPhase:
         db.init_db(conn)
         if decision.should_poll_quotes:
             poll_quotes(conn)
-        if decision.should_collect_daily_bars:
+        if decision.should_collect_daily_bars and _last_daily_bars_collection_date != now.date():
             collect_daily_bars_and_update_atr(conn)
+            _last_daily_bars_collection_date = now.date()
         conn.commit()
 
         # Outbox 발송은 별도 커밋 경계로 분리한다 -- 텔레그램 발송 자체가

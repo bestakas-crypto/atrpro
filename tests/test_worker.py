@@ -26,6 +26,16 @@ def force_kis_dummy_mode():
     object.__setattr__(settings, "kis_app_secret", original_secret)
 
 
+@pytest.fixture(autouse=True)
+def reset_daily_bars_collection_state():
+    """run_once()의 "하루 한 번만 일봉 수집" 가드는 모듈 전역 상태라, 테스트마다
+    깨끗한 상태에서 시작하도록 초기화한다(안 그러면 같은 날짜를 쓰는 다른
+    테스트끼리 서로 영향을 줄 수 있음)."""
+    worker._last_daily_bars_collection_date = None
+    yield
+    worker._last_daily_bars_collection_date = None
+
+
 def _make_instrument_with_kis_code(conn, **overrides):
     defaults = dict(name="테스트", currency="KRW", buy_multiple=1.0, sell_multiple=1.5, stop_multiple=2.0)
     defaults.update(overrides)
@@ -104,3 +114,28 @@ def test_run_once_post_market_phase_collects_bars(db_conn, monkeypatch):
     phase = worker.run_once(now=datetime(2026, 8, 4, 16, 0))  # 화요일 마감 후
     assert phase.value == "POST_MARKET"
     assert market_data_repo.get_latest_atr(db_conn, inst["id"]) is not None
+
+
+def test_run_once_only_collects_bars_once_per_day(db_conn, monkeypatch):
+    """POST_MARKET은 장마감부터 자정까지 몇 시간이나 이어지고 그 사이 매분
+    run_once()가 호출되는데, 같은 날짜 안에서는 일봉/ATR을 한 번만 수집해야
+    한다(안 그러면 자정까지 KIS를 매분 반복 호출하게 됨)."""
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    _make_instrument_with_kis_code(db_conn)
+
+    call_count = {"n": 0}
+    original = worker.collect_daily_bars_and_update_atr
+
+    def counting(conn):
+        call_count["n"] += 1
+        return original(conn)
+
+    monkeypatch.setattr(worker, "collect_daily_bars_and_update_atr", counting)
+
+    worker.run_once(now=datetime(2026, 8, 4, 16, 0))   # 화요일 마감 직후
+    worker.run_once(now=datetime(2026, 8, 4, 20, 0))   # 같은 날 저녁 -- 재수집 안 해야 함
+    worker.run_once(now=datetime(2026, 8, 4, 23, 55))  # 같은 날 자정 직전 -- 마찬가지
+    assert call_count["n"] == 1
+
+    worker.run_once(now=datetime(2026, 8, 5, 16, 0))   # 다음 거래일 마감 후 -- 다시 수집
+    assert call_count["n"] == 2
