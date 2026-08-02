@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta
 from . import db
 from .adapters.kis_client import KisApiError, get_client
 from .repositories import instruments as instruments_repo
+from .repositories import market_data as market_data_repo
 from .services import notification_service, portfolio_service
 from .services.atr_engine import InsufficientDataError, latest_atr
 from .services.market_schedule import MarketPhase, decide_polling
@@ -45,6 +46,11 @@ def poll_quotes(conn: sqlite3.Connection) -> None:
             quote = client.get_current_price(code)
         except KisApiError as exc:
             logger.warning("현재가 조회 실패 instrument=%s: %s", instrument["name"], exc)
+            # 스펙 17.3 "연속 3회 실패 -> API 장애" 카운터 갱신 + 즉시 재판정.
+            # 성공을 기다리지 않고 바로 반영해야 3번째 실패 순간 신호가 곧장
+            # API_ERROR로 막힌다(다음 성공한 폴링까지 기다리지 않음).
+            market_data_repo.record_quote_failure(conn, instrument["id"])
+            portfolio_service.recompute_signal(conn, instrument["id"])
             continue
         portfolio_service.commit_quote(
             conn, instrument["id"], price=quote.price, quoted_at=quote.quoted_at,

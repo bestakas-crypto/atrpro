@@ -194,3 +194,41 @@ def test_10_same_day_multiple_trades_respect_given_order():
     assert reordered_state.quantity == 12
     assert reordered_state.avg_price == pytest.approx(98.125)
     assert reordered_state.avg_price != state.avg_price
+
+
+# ---------------------------------------------------------------------------
+# 수수료/세금이 평균단가·실현손익에 정확히 반영되는지 (스펙 8.1, 2026-08-02 추가)
+# ---------------------------------------------------------------------------
+
+def test_buy_fee_is_included_in_cost_basis_and_avg_price():
+    """매수수수료는 보유원가에 포함되므로 평균단가를 끌어올려야 한다.
+    10주x100원 매수 + 수수료 50원 -> 원가 1050, 평균단가 105원 (수수료 0일 때의
+    100원과 달라야 함 -- 스펙 8.1 "매수수수료는 보유원가에 포함")."""
+    state = apply_buy(PositionState(), price=100, quantity=10, fee=50)
+    assert state.cost_basis == pytest.approx(1050)
+    assert state.avg_price == pytest.approx(105)
+
+
+def test_sell_fee_and_tax_reduce_realized_pnl_but_not_remaining_avg_price():
+    """매도수수료·세금은 실현손익에서만 차감하고 잔여 평균단가에는 영향을 주면
+    안 된다 (수수료 0일 때의 예시가 여전히 100원 평균단가를 유지해야 함)."""
+    state = apply_buy(PositionState(), price=100, quantity=10)  # 원가1000, 평균100
+    result = apply_sell(state, price=120, quantity=4, fee=8, tax=4)
+    # 실현손익 = (120-100)*4 - 8 - 4 = 68 (수수료/세금 없으면 80이었을 것)
+    assert result.realized_pnl == pytest.approx(68)
+    # 잔여 평균단가는 매도 수수료/세금과 무관하게 그대로 100원 유지
+    assert result.state.avg_price == pytest.approx(100)
+    assert result.state.quantity == pytest.approx(6)
+
+
+def test_spec_mandatory_example_holds_only_when_fees_are_zero():
+    """스펙 필수 예시(평균단가 150원)는 수수료·세금이 전부 0이라는 전제가 있다 --
+    수수료가 있으면 150원이 아닌 다른 값이 나와야 정상이다."""
+    trades = [
+        Trade("buy", price=100, quantity=10, fee=100),  # 원가 1100
+        Trade("sell", price=120, quantity=5, fee=0, tax=0),  # 평균단가 110 유지, qty5, cost550
+        Trade("buy", price=200, quantity=5, fee=0),  # 원가 550+1000=1550, qty10
+    ]
+    state, _ = replay_trades(trades)
+    assert state.avg_price == pytest.approx(155)  # 150원이 아님 -- 매수수수료 100원의 영향
+    assert state.avg_price != 150

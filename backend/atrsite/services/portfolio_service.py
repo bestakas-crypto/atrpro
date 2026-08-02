@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..repositories import deposits as deposits_repo
@@ -22,6 +23,7 @@ from ..repositories import position as position_repo
 from ..repositories import signals as signals_repo
 from ..repositories import trades as trades_repo
 from . import notification_service
+from .market_schedule import compute_data_status
 from .position_engine import PositionState, Trade as EngineTrade, apply_trade, replay_trades
 from .signal_engine import (
     DataStatus,
@@ -89,19 +91,39 @@ def recompute_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, 
     take_profit_price = compute_take_profit_price(avg_price, atr, instrument["sell_multiple"], quantity)
 
     current_price = quote["price"] if quote else None
-    data_status = DataStatus(quote["data_status"]) if quote else DataStatus.INSUFFICIENT_DATA
 
-    result = determine_signal(SignalInput(
-        quantity=quantity,
-        current_price=current_price,
-        next_buy_price=next_buy_price,
-        take_profit_price=take_profit_price,
-        trailing_stop_price=instrument["trailing_stop_price"],
-        data_status=data_status,
-    ))
+    # 신선도(스펙 17.3)는 "지금" 기준으로 매번 새로 계산한다 -- KIS 소스일 때만.
+    # 수동 입력(manual)은 사용자가 방금 넣은 값이므로 저장된 상태를 그대로 신뢰한다.
+    if quote is None:
+        data_status = DataStatus.INSUFFICIENT_DATA
+    elif quote["source"] == "manual":
+        data_status = DataStatus(quote["data_status"])
+    else:
+        data_status = compute_data_status(
+            quoted_at=quote["quoted_at"], now=datetime.now(timezone.utc),
+            consecutive_failures=quote.get("consecutive_failures", 0),
+        )
 
     previous = signals_repo.get_signal_state(conn, instrument_id)
     previous_status = SignalStatus(previous["status"]) if previous else None
+    # 스펙 9.4 히스테리시스 -- 직전 신호가 이미 켜져 있었는지를 넘겨서, 기준선을
+    # 살짝 반복 통과하는 가격에 매 폴링마다 신호가 깜빡이지 않게 한다.
+    was_hit_buy = previous_status == SignalStatus.BUY_TRIGGERED
+    was_hit_profit = previous_status in (SignalStatus.TAKE_PROFIT_TRIGGERED, SignalStatus.SELL_BOTH_TRIGGERED)
+    was_hit_stop = previous_status in (SignalStatus.STOP_TRIGGERED, SignalStatus.SELL_BOTH_TRIGGERED)
+
+    result = determine_signal(
+        SignalInput(
+            quantity=quantity,
+            current_price=current_price,
+            next_buy_price=next_buy_price,
+            take_profit_price=take_profit_price,
+            trailing_stop_price=instrument["trailing_stop_price"],
+            data_status=data_status,
+            atr=atr,
+        ),
+        was_hit_buy=was_hit_buy, was_hit_profit=was_hit_profit, was_hit_stop=was_hit_stop,
+    )
 
     new_state = signals_repo.upsert_signal_state(
         conn,
@@ -201,10 +223,29 @@ def record_trade(
 
 
 def edit_trade(conn: sqlite3.Connection, instrument_id: str, trade_id: str, **fields: Any) -> dict[str, Any] | None:
-    """거래 수정 -- 스펙 4.7: 수정 후 전체 재생 + 추적 손절 상태를 재검증한다."""
-    updated = trades_repo.update_trade(conn, trade_id, **fields)
-    if updated is None:
+    """거래 수정 -- 스펙 4.7: 수정 후 전체 재생 + 추적 손절 상태를 재검증한다.
+
+    DB에 쓰기 전에 먼저 메모리에서만 수정된 거래 목록을 재생해 검증한다
+    (record_trade와 동일한 원칙). 이렇게 해야 이 함수가 "호출자가 실패 시
+    트랜잭션을 롤백해줄 것"이라는 가정 없이도 스스로 원본 보존을 보장한다 --
+    edit_trade만 단독으로 호출됐을 때도(예: 스크립트, 테스트) 검증 실패 시
+    DB에 아무 흔적도 남기지 않는다.
+    """
+    current = trades_repo.get_trade(conn, trade_id)
+    if current is None:
         return None
+
+    rows = trades_repo.list_trades_for_instrument(conn, instrument_id)
+    proposed_rows = [dict(r, **fields) if r["id"] == trade_id else dict(r) for r in rows]
+    proposed_rows.sort(key=lambda r: (r["executed_at"], r["sequence_no"]))
+    proposed_trades = [
+        EngineTrade(trade_type=r["trade_type"], price=r["price"], quantity=r["quantity"],
+                    fee=r["fee"] or 0.0, tax=r["tax"] or 0.0, trade_id=r["id"])
+        for r in proposed_rows
+    ]
+    replay_trades(proposed_trades)  # 검증만 수행 -- 실패하면 예외가 그대로 전파되고 DB는 무손상
+
+    updated = trades_repo.update_trade(conn, trade_id, **fields)
     _reconcile_after_trade_change(conn, instrument_id)
     return updated
 

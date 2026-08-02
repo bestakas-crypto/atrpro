@@ -101,11 +101,12 @@ DDL_STATEMENTS: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS quote_latest (
-        instrument_id  TEXT PRIMARY KEY REFERENCES instruments(id) ON DELETE CASCADE,
-        price          REAL NOT NULL,
-        quoted_at      TEXT NOT NULL,
-        source         TEXT NOT NULL DEFAULT 'manual',
-        data_status    TEXT NOT NULL DEFAULT 'MANUAL_OVERRIDE'
+        instrument_id        TEXT PRIMARY KEY REFERENCES instruments(id) ON DELETE CASCADE,
+        price                REAL NOT NULL,
+        quoted_at            TEXT NOT NULL,
+        source               TEXT NOT NULL DEFAULT 'manual',
+        data_status          TEXT NOT NULL DEFAULT 'MANUAL_OVERRIDE',
+        consecutive_failures INTEGER NOT NULL DEFAULT 0
     )
     """,
     """

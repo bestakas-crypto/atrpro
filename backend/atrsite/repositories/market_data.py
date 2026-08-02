@@ -20,18 +20,31 @@ def upsert_quote(
     data_status: str = "MANUAL_OVERRIDE",
     quoted_at: str | None = None,
 ) -> dict[str, Any]:
+    """새 시세 조회 성공. consecutive_failures는 항상 0으로 리셋한다 --
+    실패가 연속되지 않고 있다는 뜻이므로(스펙 17.3 신선도 등급 계산의 전제)."""
     ts = quoted_at or utcnow_iso()
     conn.execute(
         """
-        INSERT INTO quote_latest (instrument_id, price, quoted_at, source, data_status)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO quote_latest (instrument_id, price, quoted_at, source, data_status, consecutive_failures)
+        VALUES (?, ?, ?, ?, ?, 0)
         ON CONFLICT(instrument_id) DO UPDATE SET
             price = excluded.price, quoted_at = excluded.quoted_at,
-            source = excluded.source, data_status = excluded.data_status
+            source = excluded.source, data_status = excluded.data_status,
+            consecutive_failures = 0
         """,
         (instrument_id, price, ts, source, data_status),
     )
     return get_quote(conn, instrument_id)  # type: ignore[return-value]
+
+
+def record_quote_failure(conn: sqlite3.Connection, instrument_id: str) -> None:
+    """시세 조회 실패 -- 스펙 17.3 "연속 3회 실패 -> API 장애" 판정용 카운터.
+    아직 성공한 시세가 한 번도 없으면(quote_latest 행 자체가 없음) 셀 것이 없으므로
+    조용히 넘어간다 -- 그 경우는 어차피 INSUFFICIENT_DATA로 처리된다."""
+    conn.execute(
+        "UPDATE quote_latest SET consecutive_failures = consecutive_failures + 1 WHERE instrument_id = ?",
+        (instrument_id,),
+    )
 
 
 def get_quote(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any] | None:
@@ -44,6 +57,7 @@ def get_quote(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any] | 
         "quoted_at": row["quoted_at"],
         "source": row["source"],
         "data_status": row["data_status"],
+        "consecutive_failures": row["consecutive_failures"],
     }
 
 

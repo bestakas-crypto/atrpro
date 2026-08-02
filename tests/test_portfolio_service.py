@@ -122,3 +122,110 @@ def test_deposits_and_fx_roundtrip(db_conn):
 
     fx_repo.set_display_currency(db_conn, "USD")
     assert fx_repo.get_display_currency(db_conn) == "USD"
+
+
+# ---------------------------------------------------------------------------
+# 리뷰에서 지적된 누락 테스트들 (2026-08-02 추가)
+# ---------------------------------------------------------------------------
+
+def test_editing_earlier_trade_that_creates_oversell_is_rejected_and_original_kept(db_conn):
+    """과거 거래를 수정해서 중간 시점 초과매도가 생기면 전체가 거부돼야 하고,
+    원래 거래 내역은 그대로 남아 있어야 한다 (부분 반영 금지)."""
+    inst = _make_instrument(db_conn)
+    buy = portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="sell", price=110, quantity=8, executed_at="2026-01-02T09:00:00")
+    # 첫 매수를 10주 -> 5주로 줄이면, 이미 8주를 판 두 번째 거래가 초과매도가 된다.
+    with pytest.raises(OversellError):
+        portfolio_service.edit_trade(db_conn, inst["id"], buy["id"], quantity=5)
+
+    # 거부됐으니 매수 거래 수량은 원래 값(10) 그대로여야 한다.
+    unchanged = trades_repo.get_trade(db_conn, buy["id"])
+    assert unchanged["quantity"] == pytest.approx(10)
+    position = position_repo.get_position(db_conn, inst["id"])
+    assert position["quantity"] == pytest.approx(2)  # 10 - 8, 원래 상태 그대로
+
+
+def test_reentry_after_full_exit_starts_a_fresh_cycle(db_conn):
+    """전량 매도 후 새로 매수하면, 이전 사이클의 최고가/손절선 흔적 없이 새
+    진입가를 기준으로 완전히 새 사이클이 시작돼야 한다 (스펙 8.4)."""
+    inst = _make_instrument(db_conn, stop_multiple=2.0)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=120)  # 최고가 120, 손절선 100
+
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="sell", price=125, quantity=10, executed_at="2026-01-05T09:00:00")
+    instrument = instruments_repo.get_instrument(db_conn, inst["id"])
+    assert instrument["post_entry_high_price"] is None
+    assert instrument["trailing_stop_price"] is None
+
+    # 새로 진입 -- 이전 사이클의 고가(120)/손절선(100) 흔적이 전혀 없어야 한다.
+    # ATR은 포지션 사이클에 종속된 값이 아니라 종목 자체의 변동성이므로, 아직
+    # 새 ATR을 안 받았어도 "마지막으로 알려진 ATR"(10)로 즉시 손절선을 계산한다
+    # (재진입 순간 보호선이 하나도 없는 것보다 낫다) -- 50 - 10*2 = 30.
+    # 이전 사이클 손절선(100)의 흔적이 섞이지 않고 완전히 새 레칫(30)에서
+    # 시작한다는 게 핵심이지, "ATR도 초기화"라는 뜻은 아니다.
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=50, quantity=10, executed_at="2026-01-06T09:00:00")
+    instrument = instruments_repo.get_instrument(db_conn, inst["id"])
+    assert instrument["post_entry_high_price"] == pytest.approx(50)
+    assert instrument["trailing_stop_price"] == pytest.approx(30)  # 50 - (이전 ATR)10*2, 과거 100과 무관한 새 레칫
+
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=5, trade_date="2026-01-06")
+    instrument = instruments_repo.get_instrument(db_conn, inst["id"])
+    assert instrument["trailing_stop_price"] == pytest.approx(40)  # 50 - 5*2, 과거 100의 흔적 없음
+
+
+def test_trades_repo_assigns_sequence_no_in_insertion_order_for_same_executed_at(db_conn):
+    """같은 executed_at(초 단위까지 동일)에 여러 거래가 들어와도, 저장소가 매기는
+    sequence_no가 삽입 순서를 보존해서 재생 순서가 흔들리지 않아야 한다 (스펙 4.5)."""
+    inst = _make_instrument(db_conn)
+    same_ts = "2026-01-01T09:00:00"
+    t1 = trades_repo.create_trade(db_conn, instrument_id=inst["id"], trade_type="buy", price=100, quantity=10, executed_at=same_ts)
+    t2 = trades_repo.create_trade(db_conn, instrument_id=inst["id"], trade_type="sell", price=120, quantity=4, executed_at=same_ts)
+    t3 = trades_repo.create_trade(db_conn, instrument_id=inst["id"], trade_type="buy", price=90, quantity=4, executed_at=same_ts)
+
+    assert t1["sequence_no"] < t2["sequence_no"] < t3["sequence_no"]
+
+    ordered = trades_repo.list_trades_for_instrument(db_conn, inst["id"])
+    assert [t["id"] for t in ordered] == [t1["id"], t2["id"], t3["id"]]
+
+    portfolio_service.recompute_position(db_conn, inst["id"])
+    position = position_repo.get_position(db_conn, inst["id"])
+    # buy10@100(avg100) -> sell4@120(avg100유지,qty6,cost600) -> buy4@90(cost600+360=960,qty10,avg96)
+    assert position["quantity"] == pytest.approx(10)
+    assert position["avg_price"] == pytest.approx(96)
+
+
+def test_kis_sourced_quote_becomes_stale_after_elapsed_time_but_manual_does_not(db_conn):
+    """KIS 소스 시세는 시간이 지나면 자동으로 STALE로 전환돼 신규 신호를 막아야
+    하고, 수동 입력 시세는 아무리 오래돼도 MANUAL_OVERRIDE를 유지해야 한다."""
+    from datetime import datetime, timedelta, timezone as tz
+    from atrsite.repositories import market_data as market_data_repo
+
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+
+    old_ts = (datetime.now(tz.utc) - timedelta(minutes=20)).isoformat()
+    market_data_repo.upsert_quote(db_conn, inst["id"], price=88, source="kis", data_status="FRESH", quoted_at=old_ts)
+    signal = portfolio_service.recompute_signal(db_conn, inst["id"])
+    assert signal["data_status"] == "STALE"
+    assert signal["status"] not in ("BUY_TRIGGERED", "TAKE_PROFIT_TRIGGERED", "STOP_TRIGGERED", "SELL_BOTH_TRIGGERED")
+
+    # 같은 만큼 오래된 수동 입력은 그대로 MANUAL_OVERRIDE 유지 (신호는 정상 판정)
+    market_data_repo.upsert_quote(db_conn, inst["id"], price=88, source="manual", data_status="MANUAL_OVERRIDE", quoted_at=old_ts)
+    signal2 = portfolio_service.recompute_signal(db_conn, inst["id"])
+    assert signal2["data_status"] == "MANUAL_OVERRIDE"
+    assert signal2["status"] == "BUY_TRIGGERED"  # 88 <= 90(다음 매수가) -> 정상 판정됨
+
+
+def test_consecutive_kis_failures_force_api_error_status(db_conn):
+    from atrsite.repositories import market_data as market_data_repo
+
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=95, source="kis", data_status="FRESH")
+
+    for _ in range(3):
+        market_data_repo.record_quote_failure(db_conn, inst["id"])
+    signal = portfolio_service.recompute_signal(db_conn, inst["id"])
+    assert signal["data_status"] == "API_ERROR"

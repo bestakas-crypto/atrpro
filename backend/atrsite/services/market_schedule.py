@@ -9,11 +9,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from enum import Enum
+from typing import Optional
+
+from .signal_engine import DataStatus
 
 KST_REGULAR_OPEN = time(9, 0)
 KST_REGULAR_CLOSE = time(15, 30)
+
+# 스펙 17.3 -- "5분 폴링 기준 예시" 신선도 등급표.
+FRESH_MAX_MINUTES = 7
+DELAYED_MAX_MINUTES = 15
+CONSECUTIVE_FAILURE_THRESHOLD = 3
 
 # 고정일 공휴일만 (연도 무관하게 매년 반복되는 것들).
 FIXED_HOLIDAYS_MM_DD = {
@@ -98,3 +106,37 @@ def decide_polling(now: datetime) -> PollingDecision:
     if phase == MarketPhase.PRE_MARKET:
         return PollingDecision(phase, False, False, "개장 전 -- 토큰/거래일 확인만")
     return PollingDecision(phase, False, False, "비거래일")
+
+
+def compute_data_status(
+    *, quoted_at: Optional[str], now: datetime, consecutive_failures: int = 0,
+) -> DataStatus:
+    """KIS 소스 시세의 신선도를 "지금" 기준으로 매번 다시 계산한다 (스펙 17.3).
+
+        0~7분 경과   -> FRESH
+        7~15분 경과  -> DELAYED
+        15분 초과    -> STALE
+        연속 3회 조회 실패 -> API_ERROR (경과시간과 무관하게 우선)
+
+    quoted_at가 없으면(아직 한 번도 성공한 조회가 없음) INSUFFICIENT_DATA.
+    수동 입력(MANUAL_OVERRIDE) 시세는 이 함수를 거치지 않는다 -- 호출자가
+    source == "manual"이면 저장된 data_status를 그대로 쓰고 이 함수를 부르지
+    않아야 한다(사용자가 방금 입력한 값을 "오래된 데이터"로 재판정하면 안 됨).
+    """
+    if quoted_at is None:
+        return DataStatus.INSUFFICIENT_DATA
+    if consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD:
+        return DataStatus.API_ERROR
+
+    quoted_dt = datetime.fromisoformat(quoted_at)
+    if quoted_dt.tzinfo is None:
+        quoted_dt = quoted_dt.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    elapsed_minutes = (now - quoted_dt).total_seconds() / 60
+    if elapsed_minutes <= FRESH_MAX_MINUTES:
+        return DataStatus.FRESH
+    if elapsed_minutes <= DELAYED_MAX_MINUTES:
+        return DataStatus.DELAYED
+    return DataStatus.STALE

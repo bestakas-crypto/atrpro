@@ -14,7 +14,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -185,7 +185,9 @@ def _dummy_quote(instrument_code: str) -> Quote:
         instrument_code=instrument_code,
         price=price,
         day_high=day_high,
-        quoted_at=datetime.now().isoformat(timespec="seconds"),
+        # UTC-aware로 통일 (repositories/market_data.py의 utils.utcnow_iso()와
+        # 동일한 형식이어야 신선도 경과시간 계산이 타임존 불일치로 틀어지지 않는다).
+        quoted_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 
 

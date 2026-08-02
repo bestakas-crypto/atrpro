@@ -278,3 +278,69 @@ def test_take_profit_inactive_without_position():
 
 def test_next_buy_price_none_without_prior_buy():
     assert compute_next_buy_price(last_buy_price=None, atr=10, buy_multiple=1.0) is None
+
+
+# ---------------------------------------------------------------------------
+# 9.4 히스테리시스가 determine_signal()에 실제로 연결됐는지 (2026-08-02 추가)
+# was_hit_*/atr을 안 넘기면(기본값) 예전과 동일한 단순 임계값 판정이어야 한다.
+# ---------------------------------------------------------------------------
+
+def test_determine_signal_without_hysteresis_args_matches_legacy_behavior():
+    """기본값(모든 was_hit_* False, atr 미지정)이면 히스테리시스 도입 전과 동일하게
+    임계값을 살짝만 벗어나도 즉시 꺼져야 한다 -- 하위 호환성 확인."""
+    inp = SignalInput(quantity=10, current_price=91, next_buy_price=90, take_profit_price=140, trailing_stop_price=80)
+    result = determine_signal(inp)
+    assert result.status == SignalStatus.NEUTRAL  # 91 > 90이므로 매수신호 아님, 밴드 없이 즉시 꺼짐
+
+
+def test_buy_signal_stays_active_within_hysteresis_band_once_triggered():
+    """매수가 90, ATR 10 -> 해제가는 90+0.1*10=91. 가격이 90 밑으로 갔다가
+    91 미만으로만 살짝 반등하면(예: 90.5) 신호가 계속 유지돼야 한다."""
+    inp = SignalInput(
+        quantity=0, current_price=90.5, next_buy_price=90, take_profit_price=None,
+        trailing_stop_price=None, atr=10,
+    )
+    result = determine_signal(inp, was_hit_buy=True)
+    assert result.status == SignalStatus.BUY_TRIGGERED
+
+
+def test_buy_signal_releases_once_price_clears_hysteresis_band():
+    """91 이상으로 완전히 벗어나면(해제가 91) 그제서야 꺼진다."""
+    inp = SignalInput(
+        quantity=0, current_price=91, next_buy_price=90, take_profit_price=None,
+        trailing_stop_price=None, atr=10,
+    )
+    result = determine_signal(inp, was_hit_buy=True)
+    assert result.status != SignalStatus.BUY_TRIGGERED
+
+
+def test_take_profit_signal_stays_active_within_hysteresis_band():
+    """익절가 140, ATR 10 -> 해제가 140-0.1*10=139. 141까지 올랐다가 139.5로
+    살짝 내려와도(139 초과) 여전히 익절 신호가 유지돼야 한다."""
+    inp = SignalInput(
+        quantity=10, current_price=139.5, next_buy_price=None, take_profit_price=140,
+        trailing_stop_price=None, atr=10,
+    )
+    result = determine_signal(inp, was_hit_profit=True)
+    assert result.status == SignalStatus.TAKE_PROFIT_TRIGGERED
+
+
+def test_stop_signal_does_not_apply_hysteresis_when_was_active_is_false():
+    """직전에 신호가 꺼져 있었다면(was_hit_stop=False) 밴드를 적용하지 않고
+    임계값 그대로 판정한다 -- 밴드는 "이미 켜져 있던 신호를 유지"할 때만 쓰인다."""
+    inp = SignalInput(
+        quantity=10, current_price=80.5, next_buy_price=None, take_profit_price=None,
+        trailing_stop_price=80, atr=10,
+    )
+    result = determine_signal(inp, was_hit_stop=False)
+    assert result.status == SignalStatus.NEUTRAL  # 80.5 > 80이므로 손절 미충족, 밴드 미적용
+
+
+def test_hysteresis_falls_back_to_plain_threshold_when_atr_missing():
+    """was_active=True여도 atr이 없으면 밴드를 못 그리므로 즉시 해제된다."""
+    inp = SignalInput(
+        quantity=0, current_price=90.5, next_buy_price=90, take_profit_price=None,
+        trailing_stop_price=None, atr=None,
+    )
+    result = determine_signal(inp, was_hit_buy=True)
+    assert result.status != SignalStatus.BUY_TRIGGERED

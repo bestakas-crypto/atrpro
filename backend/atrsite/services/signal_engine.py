@@ -21,6 +21,24 @@ signal_engine.py — 매매 기준선 계산 + 신호 우선순위 판정
 "미보유"와 "전량매도완료"는 둘 다 quantity == 0 이므로 이 엔진 안에서는 동일하게
 취급한다(quantity>0 여부 하나로 익절/손절 게이트를 건다). 두 상태를 UI 문구로
 구분하는 것은 이 모듈이 아니라 상위 계층(포지션 이력 유무) 책임이다.
+
+DELAYED 상태 처리 -- 스펙 4.3 표와 9.1 본문의 명시적 충돌 해소 (2026-08-02 결정)
+--------------------------------------------------------------------------
+스펙 4.3의 표는 "데이터 지연"일 때 매수/익절/손절 신규 신호를 전부 금지한다고
+적혀 있다. 반면 9.1 본문은 "데이터 상태가 STALE, API_ERROR, INSUFFICIENT_DATA
+이면 신규 거래 신호를 발송하지 않는다"라고 못박으면서 DataStatus.DELAYED는
+이 목록에서 의도적으로 빠져 있다(DELAYED가 열거값에 존재하는데 굳이 나열
+안 한 것은 실수라기보다 등급을 구분하려는 의도로 해석). 두 조항이 문자 그대로
+충돌하므로, 이 구현은 **9.1의 명시적 목록을 따른다** — 즉 BLOCKED_DATA_STATUSES는
+{STALE, API_ERROR, INSUFFICIENT_DATA}만 포함하고 DELAYED는 신호 판정을 계속
+허용한다. 근거:
+  1) 9.1은 4.3보다 훨씬 구체적으로(열거형까지) 규정하고 있어 더 나중/구체적인
+     의도로 보는 것이 합리적이다.
+  2) 스펙 17.3이 "0~7분 정상 / 7~15분 지연 / 15분 초과 오래된 데이터"로 등급을
+     나눈 것과도 일치한다 -- 8분 지연됐다고 매수 기준 도달 알림 자체를 통째로
+     막는 것은 실사용상 지나치게 보수적이다.
+DELAYED는 신호 판정에는 관여하되, 화면/알림 문구에서는 "지연된 데이터 기준"
+임을 별도로 표시해야 한다(17.3) -- 그 표시 책임은 이 모듈이 아니라 호출자다.
 """
 from __future__ import annotations
 
@@ -136,6 +154,9 @@ class SignalInput:
     take_profit_price: Optional[float]
     trailing_stop_price: Optional[float]
     data_status: DataStatus = DataStatus.FRESH
+    # 히스테리시스 밴드(9.4) 계산에만 쓰인다 -- None이면 히스테리시스가 자동으로
+    # 비활성화되고 예전과 동일한 단순 임계값 교차 판정으로 폴백한다(하위 호환).
+    atr: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -147,7 +168,43 @@ class SignalResult:
     hit_buy: bool = False
 
 
-def determine_signal(inp: SignalInput) -> SignalResult:
+def _hysteresis_active(
+    *, current_price: float, threshold: Optional[float], direction: str,
+    atr: Optional[float], was_active: bool, hysteresis_atr_multiple: float,
+) -> bool:
+    """진입/해제 기준가가 다른 "밴드" 판정 (스펙 9.4). direction:
+      "below" -- 진입: price <= threshold, 해제: price >= threshold + 밴드 (매수/손절)
+      "above" -- 진입: price >= threshold, 해제: price <= threshold - 밴드 (익절)
+    was_active=False 또는 atr=None이면 밴드를 그릴 수 없으므로 단순 임계값
+    교차 판정으로 정확히 폴백한다 -- 이 폴백이 곧 히스테리시스 도입 전 동작과
+    100% 동일해서, 이 함수를 쓰지 않던 기존 호출부/테스트는 전혀 안 바뀐다.
+    """
+    if threshold is None:
+        return False
+    if direction == "below":
+        if current_price <= threshold:
+            return True
+        if not was_active or atr is None:
+            return False
+        release_price = threshold + hysteresis_atr_multiple * atr
+        return current_price < release_price
+    else:  # "above"
+        if current_price >= threshold:
+            return True
+        if not was_active or atr is None:
+            return False
+        release_price = threshold - hysteresis_atr_multiple * atr
+        return current_price > release_price
+
+
+def determine_signal(
+    inp: SignalInput,
+    *,
+    was_hit_buy: bool = False,
+    was_hit_profit: bool = False,
+    was_hit_stop: bool = False,
+    hysteresis_atr_multiple: float = DEFAULT_HYSTERESIS_ATR_MULTIPLE,
+) -> SignalResult:
     """신호 우선순위(스펙 9.2)대로 하나의 상태만 반환한다.
 
     1. 손절선 + 익절가 동시 도달 -> SELL_BOTH_TRIGGERED
@@ -158,6 +215,12 @@ def determine_signal(inp: SignalInput) -> SignalResult:
 
     포지션 상태 게이트(스펙 4.3): 익절·손절 신호는 quantity > 0 일 때만 검사한다.
     매수 신호는 포지션 상태와 무관하게 항상 검사 대상이다.
+
+    was_hit_*/hysteresis_atr_multiple (스펙 9.4, 2026-08-02 추가): 직전 계산에서
+    해당 신호가 이미 켜져 있었는지를 넘기면, 기준선을 살짝 반복 통과하는
+    가격에도 신호가 매 폴링마다 깜빡이지 않고 밴드를 벗어날 때까지 유지된다.
+    호출자(portfolio_service)가 이전 signal_state로부터 이 값들을 채워 넘긴다 --
+    기본값(False)으로 두면 예전과 동일한 단순 임계값 판정이다.
     """
     has_position = inp.quantity > QUANTITY_EPSILON
 
@@ -173,17 +236,18 @@ def determine_signal(inp: SignalInput) -> SignalResult:
             reason="현재가가 없어 신호를 계산할 수 없습니다.",
         )
 
-    hit_stop = (
-        has_position
-        and inp.trailing_stop_price is not None
-        and inp.current_price <= inp.trailing_stop_price
+    hit_stop = has_position and _hysteresis_active(
+        current_price=inp.current_price, threshold=inp.trailing_stop_price, direction="below",
+        atr=inp.atr, was_active=was_hit_stop, hysteresis_atr_multiple=hysteresis_atr_multiple,
     )
-    hit_profit = (
-        has_position
-        and inp.take_profit_price is not None
-        and inp.current_price >= inp.take_profit_price
+    hit_profit = has_position and _hysteresis_active(
+        current_price=inp.current_price, threshold=inp.take_profit_price, direction="above",
+        atr=inp.atr, was_active=was_hit_profit, hysteresis_atr_multiple=hysteresis_atr_multiple,
     )
-    hit_buy = inp.next_buy_price is not None and inp.current_price <= inp.next_buy_price
+    hit_buy = _hysteresis_active(
+        current_price=inp.current_price, threshold=inp.next_buy_price, direction="below",
+        atr=inp.atr, was_active=was_hit_buy, hysteresis_atr_multiple=hysteresis_atr_multiple,
+    )
 
     if hit_stop and hit_profit:
         return SignalResult(SignalStatus.SELL_BOTH_TRIGGERED, "추적 손절선과 익절가에 동시 도달했습니다.", hit_stop, hit_profit, hit_buy)
@@ -229,16 +293,11 @@ def is_buy_signal_active(
     해제: 현재가 >= 매수 기준가 + hysteresis_atr_multiple * ATR
 
     ATR이 없으면 밴드를 적용할 수 없으므로 단순 임계값 비교로 폴백한다.
-    이 함수는 "이번 폴링에서 매수 신호를 계속 켜둘지"만 결정하는 보조 함수이고,
-    determine_signal()의 우선순위 판정 자체를 대체하지 않는다 — worker가 신호를
-    상태 머신으로 유지하고 싶을 때 선택적으로 조합해서 쓴다.
+    이 함수는 독립적으로도 쓸 수 있는 단독 유틸리티다. determine_signal()은
+    내부적으로 동일한 로직(_hysteresis_active)을 매수/익절/손절 세 가지 모두에
+    적용하므로, 이 함수를 직접 호출하지 않아도 신호 판정에는 이미 반영된다.
     """
-    if current_price <= next_buy_price:
-        return True
-    if not was_active:
-        return False
-    if atr is None:
-        # ATR 미확정이면 밴드를 못 그리므로 기준가 자체로만 즉시 해제.
-        return False
-    release_price = next_buy_price + hysteresis_atr_multiple * atr
-    return current_price < release_price
+    return _hysteresis_active(
+        current_price=current_price, threshold=next_buy_price, direction="below",
+        atr=atr, was_active=was_active, hysteresis_atr_multiple=hysteresis_atr_multiple,
+    )

@@ -19,6 +19,9 @@ __pycache__/
 .venv/
 venv/
 
+# 외부 도구용 임시 export (예: GPT 리뷰용 zip) -- 프로젝트 소스 아님
+*.zip
+
 # 에디터/OS
 .DS_Store
 Thumbs.db
