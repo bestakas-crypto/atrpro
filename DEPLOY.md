@@ -1,7 +1,21 @@
-# ATRsite-pro 배포 절차 (오라클 클라우드 서버 준비된 후)
+# ATRsite-pro 배포 절차
 
-이 문서는 **아직 실행하지 않는다.** 오라클 클라우드 인스턴스가 실제로 만들어진
-뒤에 순서대로 따라 하기 위한 절차 문서다 (스펙 17.2, 15절 기준).
+2026-08-02 RackNerd VPS(Ubuntu 24.04, KVM)로 실제 배포 완료 -- 이 문서
+그대로 따라서 진행했다(오라클 대신 RackNerd를 썼을 뿐 절차는 동일). 아래
+내용은 그 실제 배포 경험을 반영해 갱신함.
+
+**중요 -- 시간대(timezone) 필수 확인**: `market_schedule.py`의 장중 판정
+로직 전체가 `datetime.now()`가 KST를 반환한다고 가정한다(로컬 개발 PC는
+이미 한국시간이라 문제가 없었음). 서버가 기본 UTC로 뜨는 경우가 많으므로
+(RackNerd NY 리전도 기본 UTC였음), 배포 직후 반드시:
+```bash
+timedatectl                       # Time zone이 Asia/Seoul인지 확인
+sudo timedatectl set-timezone Asia/Seoul   # 아니면 이걸로 바꾸고
+sudo systemctl restart atrsite-worker atrsite-backup.timer  # 재시작
+```
+이걸 안 하면 워커의 장중/마감 판정이 9시간 밀려서 완전히 틀어지고,
+`atrsite-backup.timer`도 16:30 KST가 아니라 16:30 UTC(한국시간 새벽
+1시반)에 돈다.
 
 ## 0. 시작하기 전에 -- 이 저장소에 있는 위험 파일
 
@@ -73,11 +87,27 @@ sudo journalctl -u atrsite-web -f
 `atrsite-web.service`는 `127.0.0.1:8000`에서만 대기한다. 외부에 노출하려면
 Caddy/Nginx를 리버스 프록시로 앞에 둔다 (스펙 14.1 "API의 동일 출처 사용" --
 프런트엔드 정적 파일도 같은 FastAPI 프로세스가 서빙하므로 프록시는 도메인/HTTPS
-종단 역할만 하면 된다).
+종단 역할만 하면 된다). 실제 배포에서 쓴 nginx 설정은 `nginx/atrsite.conf`에
+있다(도메인 없이 HTTP 80만 프록시 -- HTTPS는 도메인 생기면 certbot으로 추가):
+```bash
+sudo cp nginx/atrsite.conf /etc/nginx/sites-available/atrsite
+sudo ln -sf /etc/nginx/sites-available/atrsite /etc/nginx/sites-enabled/atrsite
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl restart nginx && sudo systemctl enable nginx
+```
 
-journald 로그가 무한정 쌓이지 않도록 `/etc/systemd/journald.conf`에
-`SystemMaxUse=200M` 같은 상한을 설정해두는 것을 권장한다 (2단계 완료 보고에서
-이미 안내한 내용).
+`API_KEY`는 인터넷에 노출되는 대시보드를 아무나 못 보게 막는 최소한의
+방어선이다 -- 반드시 채울 것(`.env`의 다른 KIS/텔레그램 값과 달리 이건
+제3자 자격증명이 아니라 이 앱 자체의 접근 인증용이라 `openssl rand -hex 24`
+같은 걸로 새로 생성해도 무방하다). 프런트엔드는 처음 접속 시
+`window.prompt()`로 물어봐서 브라우저 `localStorage`에 저장해둔다.
+
+journald 로그가 무한정 쌓이지 않도록 상한을 설정해둔다:
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/atrsite.conf
+sudo systemctl restart systemd-journald
+```
 
 ## 6. 백업 정책 (스펙 15절)
 

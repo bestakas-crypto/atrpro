@@ -552,9 +552,8 @@
   - CSRF 방어, 인증 실패 횟수 제한(스펙 14.1) -- 아직 미구현
   - Shadow Mode(더미 파이프라인 vs 수동입력 공식 비교 테스트) -- 지금까지는
     CLI로 손계산 대조만 했고 formal 테스트로는 안 만듦
-  - get_daily_bars()는 목업 응답으로만 검증됨 -- 실서버로는 아직 확인 못 함
-    (같은 세션에서 토큰을 너무 여러 번 요청해서 KIS 발급 한도에 걸림, 시간
-    두고 재시도 필요)
+  - (해결됨) get_daily_bars() 실서버 검증 -- 국내(삼성전자 41개 일봉)/해외
+    (QQQ 100개 일봉) 모두 완료
   - worker.py를 실제로 몇 분 이상 계속 띄워서 5분 주기 자동 폴링이 진짜
     반복되는 걸 지켜본 적은 아직 없음 (run_once() 단발 호출로만 각 단계
     검증했음) -- 실제로 오래 띄워보는 건 다음에
@@ -564,3 +563,57 @@
     사용자 보유 종목 대부분이 미국주식이라 미국 장중(한국시간 밤~새벽)
     자동 갱신이 안 됨. 수동 갱신 버튼으로는 당장 대응 가능하나, 자동
     폴링 시간대 확장이 필요한지는 사용자 확인 필요
+  - VPS에는 배포했지만(아래 절 참고) .env의 KIS/텔레그램 실제 값은 아직
+    안 채움 -- 사용자가 서버에 직접 SSH로 들어가서 입력해야 함(더미
+    모드로만 떠 있는 상태)
+  - Oracle Object Storage 원격 백업 업로드는 여전히 미구현 -- 지금은
+    로컬(/opt/atrsite/backups) 최신 2개만 보관됨
+
+--------------------------------------------------------------------
+[VPS 실전 배포 -- RackNerd, systemd 서비스 + nginx까지 완료] (2026-08-02)
+--------------------------------------------------------------------
+  - 사용자가 RackNerd에서 VPS 구매 (2GB KVM, Ubuntu 24.04, 107.173.91.254,
+    New York) -- "서버 관련 서비스 다 등록시키고, 코드까지 다 업로드하고
+    대시보드 정상작동까지 다 진행하라"는 지시로 전체 배포 진행.
+  - root 비밀번호는 채팅으로 안 받음(API 키와 같은 원칙) -- SSH 키 쌍을
+    직접 생성해서 공개키만 사용자가 NerdVM 웹 콘솔(VNC)로 root 로그인해
+    등록하게 함. 이후 root 비밀번호 없이 키로만 접속.
+  - 기본 보안: 시스템 업데이트(361개 패키지) -> strpro sudo 계정 생성
+    (NOPASSWD, SSH 키 접속) -> ufw 방화벽(22/80/443만 허용) -> root 직접
+    SSH 로그인 차단(PermitRootLogin no, PasswordAuthentication no) ->
+    strpro 키로 여전히 접속되고 root는 막힌 것 확인.
+  - 로컬에 커밋만 돼 있고 GitHub(bestakas-crypto/atrpro)에 안 올라가 있던
+    커밋 4개(QQQ 버그 수정, 해외 TR, strpro.bat, ATR 백필+MODP+HTTP 에러
+    수정)를 먼저 push.
+  - 배포: python3.12-venv/nginx 설치 -> /opt/atrsite에 git clone -> venv +
+    requirements 설치 -> 서버에서도 pytest 140개 전부 통과 확인 -> .env는
+    .env.example에서 시작(KIS/텔레그램 값은 비워둠, 사용자가 직접 채워야
+    함 -- 이번에도 credential은 내가 직접 안 넣음) -> API_KEY는 내가
+    openssl로 랜덤 생성해서 채움(제3자 금융 자격증명이 아니라 이 앱
+    자체의 접근 인증용이라 직접 생성 -- 인터넷에 노출되는 대시보드라
+    비워두면 아무나 접근 가능해서 위험) -> KIS_IS_PAPER_TRADING=false로
+    설정(로컬과 동일하게 실전 계좌 기준).
+  - atrsite 시스템 계정 생성(웹/워커 프로세스 전용, 최소 권한) -> systemd
+    유닛 4개(web/worker/backup.service/backup.timer) 설치 및 기동 -> 전부
+    active 확인.
+  - **실제로 재현된 배포 특유의 버그 하나 발견**: 서버 시스템 시간대가
+    기본 UTC였음. market_schedule.py의 장중 판정 로직 전체가
+    "datetime.now()가 KST"라고 가정하는 구조라(로컬 개발 PC는 이미 KST라
+    문제가 없었음), UTC 서버에서는 장중 판정이 9시간 밀려서 완전히
+    틀어질 뻔했음 -- `timedatectl set-timezone Asia/Seoul`로 서버
+    시스템 시간대 자체를 한국시간으로 바꿔서 해결(코드 수정 아님, 배포
+    환경 설정 문제). 이걸 안 고쳤으면 backup.timer도 16:30 KST가 아니라
+    16:30 UTC(=한국시간 새벽 1시반)에 돌 뻔했음.
+  - nginx를 80번 포트 리버스 프록시로 세팅(127.0.0.1:8000 -> 외부 80) --
+    스펙 14.1 "동일 출처" 원칙대로 프런트엔드 정적 파일도 같은 FastAPI가
+    서빙하므로 nginx는 그냥 앞단 역할만 함.
+  - journald 로그 상한 200M 설정(DEPLOY.md 권장사항).
+  - 검증: 공인 IP(http://107.173.91.254)로 대시보드 로딩, API_KEY 없이는
+    401, 있으면 200, 종목 생성/삭제(POST/DELETE) 실제 DB 반영까지 브라우저
+    기반으로 전부 확인.
+  - **남은 유일한 수동 작업**: `.env`의 KIS_APP_KEY/SECRET/ACCOUNT_NO,
+    TELEGRAM_BOT_TOKEN/CHAT_ID -- 사용자가 서버에 직접 SSH로 들어가서
+    채워야 함(`ssh -i ~/.ssh/strpro_vps strpro@107.173.91.254`, 이후
+    `sudo nano /opt/atrsite/.env`, 저장 후
+    `sudo systemctl restart atrsite-web atrsite-worker`). 그 전까지는
+    더미 모드로 동작(실제 KIS/텔레그램 연동 없음).
