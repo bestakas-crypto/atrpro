@@ -175,6 +175,17 @@ class KisClient:
         except (KeyError, ValueError) as exc:
             raise KisApiError(f"현재가 응답 형식 이상 code={instrument_code}: {output}") from exc
 
+        # 이 TR은 국내(KRX) 종목 전용이다. QQQ 같은 해외 티커나 존재하지 않는
+        # 코드를 넣어도 KIS는 rt_cd="0"(정상)에 stck_prpr="0"을 돌려줄 뿐 에러를
+        # 주지 않는다 -- 그대로 두면 가격 0을 진짜 시세로 저장해버리므로 여기서
+        # 명시적으로 걸러낸다.
+        if price <= 0:
+            raise KisApiError(
+                f"현재가 조회 결과가 비정상입니다(code={instrument_code}): "
+                "국내(KRX) 상장 종목 코드가 맞는지 확인하세요. 해외 종목은 "
+                "아직 지원하지 않습니다."
+            )
+
         return Quote(
             instrument_code=instrument_code,
             price=price,
@@ -221,14 +232,24 @@ class KisClient:
             if not raw_date:
                 continue  # 명세상 영업일 없는 빈 행이 섞여 나올 수 있음
             try:
-                bars.append(DailyBar(
-                    trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
-                    high=float(row["stck_hgpr"]),
-                    low=float(row["stck_lwpr"]),
-                    close=float(row["stck_clpr"]),
-                ))
+                close = float(row["stck_clpr"])
+                high = float(row["stck_hgpr"])
+                low = float(row["stck_lwpr"])
             except (KeyError, ValueError) as exc:
                 raise KisApiError(f"일봉 응답 형식 이상 code={instrument_code}: {row}") from exc
+            if close <= 0:
+                # get_current_price와 동일한 이유 -- 국내 TR이 알 수 없는
+                # 코드에도 0값 행을 "정상"으로 줄 수 있다.
+                raise KisApiError(
+                    f"일봉 조회 결과가 비정상입니다(code={instrument_code}): "
+                    "국내(KRX) 상장 종목 코드가 맞는지 확인하세요."
+                )
+            bars.append(DailyBar(
+                trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                high=high,
+                low=low,
+                close=close,
+            ))
 
         bars.sort(key=lambda b: b.trade_date)
         return bars

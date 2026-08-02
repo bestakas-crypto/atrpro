@@ -197,6 +197,35 @@ def test_get_daily_bars_parses_and_sorts_ascending(fake_credentials):
         client.close()
 
 
+def test_get_current_price_raises_kis_api_error_on_zero_price(fake_credentials):
+    """QQQ처럼 국내(KRX) TR이 모르는 코드를 넣으면 KIS는 rt_cd="0"(정상)에
+    stck_prpr="0"을 준다 -- 에러가 아니라서 그냥 두면 가격 0을 진짜 시세로
+    저장해버린다(2026-08-02 실사용 중 QQQ에서 실제로 재현된 버그)."""
+    client = _client_with_fake_transport({
+        "rt_cd": "0", "msg1": "정상처리 되었습니다.",
+        "output": {"stck_prpr": "0", "stck_hgpr": "0", "stck_lwpr": "0"},
+    })
+    try:
+        with pytest.raises(KisApiError):
+            client.get_current_price("QQQ")
+    finally:
+        client.close()
+
+
+def test_get_daily_bars_raises_kis_api_error_on_zero_close(fake_credentials):
+    client = _client_with_fake_transport({
+        "rt_cd": "0",
+        "output2": [
+            {"stck_bsop_date": "20260501", "stck_hgpr": "0", "stck_lwpr": "0", "stck_clpr": "0"},
+        ],
+    })
+    try:
+        with pytest.raises(KisApiError):
+            client.get_daily_bars("QQQ", "2026-05-01", "2026-05-01")
+    finally:
+        client.close()
+
+
 def test_get_daily_bars_skips_blank_rows(fake_credentials):
     client = _client_with_fake_transport({
         "rt_cd": "0",

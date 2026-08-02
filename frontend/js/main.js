@@ -292,11 +292,23 @@ function init() {
         reg.update().catch(() => {});
       }).catch(() => {});
     });
+    // 배경에서 새 서비스워커가 활성화되면(reg.update()가 주기적으로 검사함)
+    // 지금 당장 리로드하면 사용자가 입력 중인 모달(예: 종목 추가창에 통화를
+    // 타이핑하던 중)이 통째로 사라진다 -- 2026-08-02 실사용 중 재현된 버그.
+    // 열려 있는 모달이 없을 때만 즉시 반영하고, 모달이 열려 있으면 닫힐 때까지
+    // 미뤘다가 반영한다.
     let swRefreshed = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (swRefreshed) return;
       swRefreshed = true;
-      location.reload();
+      const reloadWhenIdle = () => {
+        if (document.querySelector('.modal-overlay:not([hidden])')) {
+          setTimeout(reloadWhenIdle, 1000);
+          return;
+        }
+        location.reload();
+      };
+      reloadWhenIdle();
     });
   }
 }
