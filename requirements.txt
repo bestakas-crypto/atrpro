@@ -1,0 +1,9 @@
+# ATRsite-pro 런타임 의존성 -- 스펙 6절 "권장 기술 스택".
+# 로컬 개발 환경(conda env: strpro, Python 3.12)에서 실제로 설치/검증한 버전으로 고정했다.
+# 배포 시 Linux(ARM)에서는 uvicorn[standard]가 uvloop까지 함께 설치한다(Windows 개발기에는 없음 -- 정상).
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+httpx==0.28.1
+python-dotenv==1.2.2
+pydantic==2.13.4

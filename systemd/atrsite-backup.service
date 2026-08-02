@@ -1,0 +1,15 @@
+[Unit]
+Description=ATRsite-pro DB backup (일회성 -- atrsite-backup.timer가 스케줄링)
+
+[Service]
+Type=oneshot
+User=atrsite
+Group=atrsite
+WorkingDirectory=/opt/atrsite
+EnvironmentFile=/opt/atrsite/.env
+ExecStart=/opt/atrsite/venv/bin/python scripts/backup.py
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/atrsite/data /opt/atrsite/backups

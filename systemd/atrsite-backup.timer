@@ -1,0 +1,11 @@
+[Unit]
+Description=Run ATRsite-pro DB backup daily after market close (KST)
+
+[Timer]
+# 스펙 11.3 "장 마감 후" 처리 뒤에 실행되도록 KRX 정규장(15:30) 이후로 잡았다.
+# 서버 타임존이 Asia/Seoul이 아니라면(timedatectl) 이 값을 그에 맞게 조정할 것.
+OnCalendar=*-*-* 16:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
