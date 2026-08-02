@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from ..repositories import deposits as deposits_repo
@@ -23,6 +23,7 @@ from ..repositories import position as position_repo
 from ..repositories import signals as signals_repo
 from ..repositories import trades as trades_repo
 from . import notification_service
+from .atr_engine import InsufficientDataError, latest_atr
 from .market_schedule import compute_data_status
 from .position_engine import PositionState, Trade as EngineTrade, apply_trade, replay_trades
 from .signal_engine import (
@@ -404,6 +405,34 @@ def commit_atr(
     _apply_ratchet(conn, instrument_id)
     recompute_signal(conn, instrument_id)
     return instruments_repo.get_instrument(conn, instrument_id)  # type: ignore[return-value]
+
+
+def backfill_atr_now(conn: sqlite3.Connection, instrument_id: str) -> None:
+    """KIS 종목코드를 가진 종목을 새로 등록한 직후 -- worker.py의 다음 장마감
+    수집을 기다리지 않고 최근 확정 일봉으로 ATR을 즉시 한 번 계산해 둔다
+    (2026-08-02 추가, GPT 리뷰 계기로 발견한 실제 갭: 등록 직후에는 다음
+    장마감까지 ATR이 계속 비어 있어 신호 판정이 안 됐음).
+
+    실패해도(코드 오류, 상장 얼마 안 된 종목이라 일봉 부족 등) 조용히
+    아무 것도 하지 않는다 -- 종목 등록 자체가 이것 때문에 실패하면 안 되고,
+    실패해도 다음 장마감 후 worker.py가 정상적으로 다시 시도한다.
+    """
+    from ..adapters.kis_client import KisApiError, get_client  # 지역 임포트: adapters -> services 방향 유지
+
+    instrument = instruments_repo.get_instrument(conn, instrument_id)
+    if instrument is None or not instrument["kis_code"]:
+        return
+
+    client = get_client()
+    end = date.today().isoformat()
+    start = (date.today() - timedelta(days=60)).isoformat()
+    try:
+        bars = client.get_daily_bars(instrument["kis_code"], start, end, market=instrument["kis_market"])
+        point = latest_atr(bars, period=14)
+    except (KisApiError, InsufficientDataError):
+        return
+
+    commit_atr(conn, instrument_id, atr=point.atr, trade_date=point.trade_date, source="kis")
 
 
 def commit_post_high(conn: sqlite3.Connection, instrument_id: str, *, post_entry_high_price: float | None) -> dict[str, Any]:

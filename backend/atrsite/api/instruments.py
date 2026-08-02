@@ -6,6 +6,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..repositories import instruments as instruments_repo
+from ..repositories import market_data as market_data_repo
 from ..repositories import trades as trades_repo
 from ..services import portfolio_service
 from ..utils import utcnow_iso
@@ -23,11 +24,17 @@ router = APIRouter(prefix="/api/v1/instruments", tags=["instruments"], dependenc
 
 @router.post("", status_code=201)
 def create_instrument(body: InstrumentCreate, conn: sqlite3.Connection = Depends(get_conn)):
-    return instruments_repo.create_instrument(
+    instrument = instruments_repo.create_instrument(
         conn, name=body.name, currency=body.currency,
         buy_multiple=body.buy_multiple, sell_multiple=body.sell_multiple, stop_multiple=body.stop_multiple,
         tranche_amount=body.tranche_amount, kis_code=body.kis_code, kis_market=body.kis_market,
     )
+    if body.kis_code:
+        # 다음 장마감까지 기다리지 않고 최근 확정 일봉으로 ATR을 바로 채워둔다.
+        # 실패해도(코드 오류 등) 종목 등록 자체는 이미 끝난 뒤이므로 무시한다.
+        portfolio_service.backfill_atr_now(conn, instrument["id"])
+        instrument = instruments_repo.get_instrument(conn, instrument["id"])
+    return instrument
 
 
 @router.get("")
@@ -53,6 +60,11 @@ def update_settings(instrument_id: str, body: InstrumentSettingsUpdate, conn: sq
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="instrument not found")
+    if body.kis_code and market_data_repo.get_latest_atr(conn, instrument_id) is None:
+        # 등록 때는 KIS 코드를 안 넣었다가 설정에서 나중에 채운 경우도 똑같이
+        # 처리한다 -- 이미 ATR이 있으면 건드리지 않는다(사용자가 배수만
+        # 바꾸려고 설정을 저장했을 뿐인데 기존 값을 덮어쓰면 안 됨).
+        portfolio_service.backfill_atr_now(conn, instrument_id)
     portfolio_service.recompute_signal(conn, instrument_id)
     return updated
 

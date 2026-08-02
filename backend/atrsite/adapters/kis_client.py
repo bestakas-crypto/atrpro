@@ -126,16 +126,25 @@ class TokenCache:
         if not settings.kis_app_key or not settings.kis_app_secret:
             raise KisApiError("KIS_APP_KEY / KIS_APP_SECRET 미설정 -- .env 확인")
 
-        res = http.post(
-            base_url + OAUTH_TOKEN_PATH,
-            json={
-                "grant_type": "client_credentials",
-                "appkey": settings.kis_app_key,
-                "appsecret": settings.kis_app_secret,
-            },
-            timeout=10,
-        )
-        res.raise_for_status()
+        try:
+            res = http.post(
+                base_url + OAUTH_TOKEN_PATH,
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": settings.kis_app_key,
+                    "appsecret": settings.kis_app_secret,
+                },
+                timeout=10,
+            )
+            res.raise_for_status()
+        except httpx.HTTPError as exc:
+            # httpx가 던지는 원시 예외(HTTPStatusError/타임아웃/연결 실패 등)를
+            # 여기서 KisApiError로 바꿔놔야 worker.py/portfolio_service.py의
+            # "except KisApiError"가 실제로 잡는다 -- 안 그러면 토큰 발급이
+            # 잠깐 막혔을 때(예: 짧은 시간에 재발급 시도가 몰려 403) 원시
+            # 예외가 그대로 새어나가 worker 루프 전체가 죽는다(2026-08-02
+            # 실사용 중 실제로 403으로 재현됨).
+            raise KisApiError(f"토큰 발급 실패: {exc}") from exc
         data = res.json()
         token = (data.get("access_token") or "").strip()
         expires_in = int(data.get("expires_in", 86400))
@@ -157,6 +166,19 @@ class KisClient:
 
     def _base_url(self) -> str:
         return KIS_BASE_VIRTUAL if settings.kis_is_paper_trading else KIS_BASE_LIVE
+
+    def _get_json(self, url: str, *, headers: dict[str, str], params: dict[str, str]) -> dict:
+        """GET + raise_for_status + json()을 한 곳에서 처리하고, httpx가 던지는
+        원시 예외(HTTP 4xx/5xx, 타임아웃, 연결 실패 등)를 전부 KisApiError로
+        바꿔준다 -- TokenCache.get()과 같은 이유(2026-08-02 실사용 중 403으로
+        실제 재현됨: worker.py/portfolio_service.py는 KisApiError만 잡으므로
+        원시 예외가 새어나가면 worker 루프가 죽거나 API가 500을 낸다)."""
+        try:
+            res = self._http.get(url, headers=headers, params=params, timeout=10)
+            res.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise KisApiError(f"KIS 요청 실패 url={url}: {exc}") from exc
+        return res.json()
 
     def _headers(self, tr_id: str) -> dict[str, str]:
         token = self._token_cache.get(self._http, self._base_url())
@@ -186,14 +208,11 @@ class KisClient:
         manual 폴더 명세 그대로: 요청은 FID_COND_MRKT_DIV_CODE(J)+FID_INPUT_ISCD,
         응답 output.stck_prpr(현재가)/output.stck_hgpr(당일 최고가)를 쓴다.
         """
-        res = self._http.get(
+        body = self._get_json(
             self._base_url() + EP_CURRENT_PRICE,
             headers=self._headers(TR_CURRENT_PRICE),
             params={"FID_COND_MRKT_DIV_CODE": FID_MARKET_DIV_KRX, "FID_INPUT_ISCD": instrument_code},
-            timeout=10,
         )
-        res.raise_for_status()
-        body = res.json()
         if body.get("rt_cd") != "0":
             raise KisApiError(
                 f"현재가 조회 실패 code={instrument_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
@@ -231,14 +250,11 @@ class KisClient:
         output.last(현재가)/output.high(당일 고가)를 쓴다. 2026-08-02 QQQ/NAS로
         실전 계좌에서 직접 검증(687.99 USD 등 정상값 확인).
         """
-        res = self._http.get(
+        body = self._get_json(
             self._base_url() + EP_OVERSEAS_PRICE_DETAIL,
             headers=self._headers(TR_OVERSEAS_PRICE_DETAIL),
             params={"AUTH": "", "EXCD": market, "SYMB": instrument_code},
-            timeout=10,
         )
-        res.raise_for_status()
-        body = res.json()
         if body.get("rt_cd") != "0":
             raise KisApiError(
                 f"해외 현재가 조회 실패 code={instrument_code} market={market} "
@@ -286,7 +302,7 @@ class KisClient:
         날짜 오름차순으로 다시 정렬한다 -- atr_engine이 과거->최신 순서를
         전제로 하기 때문).
         """
-        res = self._http.get(
+        body = self._get_json(
             self._base_url() + EP_DAILY_CHART_PRICE,
             headers=self._headers(TR_DAILY_CHART_PRICE),
             params={
@@ -297,10 +313,7 @@ class KisClient:
                 "FID_PERIOD_DIV_CODE": "D",
                 "FID_ORG_ADJ_PRC": "0",
             },
-            timeout=10,
         )
-        res.raise_for_status()
-        body = res.json()
         if body.get("rt_cd") != "0":
             raise KisApiError(
                 f"일봉 조회 실패 code={instrument_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
@@ -342,18 +355,20 @@ class KisClient:
         필요한 15개보다 훨씬 많이 오므로 문제 없음). 2026-08-02 QQQ/NAS로
         실전 계좌에서 직접 검증(100건, 최신순으로 옴 -> 오름차순 재정렬 필요,
         국내 TR과 동일).
+
+        MODP(수정주가반영여부)는 국내 TR의 FID_ORG_ADJ_PRC와 값 의미가 반대다
+        -- 국내는 "0=수정주가/1=원주가", 해외는 "0=미반영/1=반영"(KIS 공식
+        예제 코드 기준). 액면분할/배당락으로 과거 봉이 흔들려 ATR이 왜곡되는
+        걸 막으려면 반드시 "1"(수정주가 반영)이어야 한다.
         """
-        res = self._http.get(
+        body = self._get_json(
             self._base_url() + EP_OVERSEAS_DAILY_PRICE,
             headers=self._headers(TR_OVERSEAS_DAILY_PRICE),
             params={
                 "AUTH": "", "EXCD": market, "SYMB": instrument_code,
-                "GUBN": "0", "BYMD": end_date.replace("-", ""), "MODP": "0",
+                "GUBN": "0", "BYMD": end_date.replace("-", ""), "MODP": "1",
             },
-            timeout=10,
         )
-        res.raise_for_status()
-        body = res.json()
         if body.get("rt_cd") != "0":
             raise KisApiError(
                 f"해외 일봉 조회 실패 code={instrument_code} market={market} "

@@ -12,6 +12,7 @@
 """
 import time
 
+import httpx
 import pytest
 
 from atrsite.adapters.kis_client import KisApiError, KisClient, RateLimiter, TokenCache
@@ -59,6 +60,21 @@ def _client_with_fake_transport(get_payload):
     client._token_cache.get = lambda http, base_url: "fake-token"  # 네트워크로 토큰 발급 시도 안 함
     client._http.get = lambda *a, **kw: _FakeResponse(get_payload)
     return client
+
+
+def _client_with_captured_request(get_payload):
+    """실제로 보낸 요청 params까지 검증하고 싶을 때 -- captured["params"]에 마지막
+    호출의 kwargs["params"]가 남는다."""
+    client = KisClient()
+    client._token_cache.get = lambda http, base_url: "fake-token"
+    captured: dict = {}
+
+    def fake_get(*a, **kw):
+        captured["params"] = kw.get("params")
+        return _FakeResponse(get_payload)
+
+    client._http.get = fake_get
+    return client, captured
 
 
 def test_rate_limiter_enforces_minimum_interval():
@@ -136,6 +152,44 @@ def test_token_cache_caches_token_across_calls(restore_kis_credentials):
     token2 = cache.get(http, "https://example.invalid")
     assert token1 == token2 == "token-1"  # 두 번째 호출은 캐시를 재사용해야 함
     assert call_count["n"] == 1
+
+
+def test_token_cache_wraps_raw_http_errors_as_kis_api_error(restore_kis_credentials):
+    """2026-08-02 실사용 중 실제로 재현된 버그 -- 토큰 재발급이 짧은 시간에
+    몰려 KIS가 403을 돌려줬을 때, httpx.HTTPStatusError가 그대로 새어나가면
+    worker.py/portfolio_service.py의 "except KisApiError"가 못 잡아서 worker
+    루프 전체가 죽거나 API가 500을 낸다. TokenCache.get()이 이걸 KisApiError로
+    바꿔야 한다."""
+    object.__setattr__(settings, "kis_app_key", "dummy-key")
+    object.__setattr__(settings, "kis_app_secret", "dummy-secret")
+    cache = TokenCache()
+
+    class DummyResponse:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("403 Forbidden", request=None, response=None)
+
+    class DummyHttp:
+        def post(self, *a, **kw):
+            return DummyResponse()
+
+    with pytest.raises(KisApiError):
+        cache.get(DummyHttp(), "https://example.invalid")
+
+
+def test_get_current_price_wraps_raw_http_errors_as_kis_api_error(fake_credentials):
+    client = KisClient()
+    client._token_cache.get = lambda http, base_url: "fake-token"
+
+    class RaisingResponse:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("500 Internal Server Error", request=None, response=None)
+
+    client._http.get = lambda *a, **kw: RaisingResponse()
+    try:
+        with pytest.raises(KisApiError):
+            client.get_current_price("000660")
+    finally:
+        client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +336,19 @@ def test_get_daily_bars_overseas_parses_and_sorts_ascending(fake_credentials):
         bars = client.get_daily_bars("QQQ", "2026-06-01", "2026-07-31", market="NAS")
         assert [b.trade_date for b in bars] == ["2026-07-30", "2026-07-31"]
         assert bars[1].close == 687.99
+    finally:
+        client.close()
+
+
+def test_get_daily_bars_overseas_requests_adjusted_price(fake_credentials):
+    """MODP는 해외 TR에서 국내와 반대 의미다(0=미반영/1=반영) -- 액면분할 같은
+    이벤트로 과거 봉이 흔들려 ATR이 왜곡되지 않으려면 반드시 "1"(수정주가
+    반영)을 보내야 한다. GPT 리뷰 계기로 KIS 공식 예제와 대조해서 발견한
+    실제 버그(2026-08-02) -- 회귀 방지용 테스트."""
+    client, captured = _client_with_captured_request({"rt_cd": "0", "output2": []})
+    try:
+        client.get_daily_bars("QQQ", "2026-06-01", "2026-07-31", market="NAS")
+        assert captured["params"]["MODP"] == "1"
     finally:
         client.close()
 

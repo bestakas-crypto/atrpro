@@ -231,6 +231,84 @@ def test_refresh_all_quotes(client):
         object.__setattr__(settings, "kis_app_secret", original_secret)
 
 
+def test_create_instrument_with_kis_code_backfills_atr_immediately(client):
+    """장마감(worker.py의 다음 POST_MARKET)까지 기다리지 않고, 종목 등록
+    직후 바로 ATR이 채워져야 한다(2026-08-02 추가, GPT 리뷰 계기로 발견한
+    실제 갭)."""
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        inst = client.post(
+            "/api/v1/instruments", json={"name": "테스트", "kis_code": "005930", "kis_market": "KRX"}
+        ).json()
+        assert inst["trailing_stop_price"] is None  # 아직 매수 전이라 레칫은 없음
+        detail = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail["atr"] is not None
+        assert detail["atr"]["atr"] > 0
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
+def test_create_instrument_without_kis_code_leaves_atr_empty(client):
+    inst = client.post("/api/v1/instruments", json={"name": "수동종목"}).json()
+    detail = client.get(f"/api/v1/instruments/{inst['id']}").json()
+    assert detail["atr"] is None
+
+
+def test_update_settings_backfills_atr_when_kis_code_added_later(client):
+    """처음엔 KIS 코드 없이 등록했다가 설정에서 나중에 채우는 경우도 동일하게
+    바로 백필돼야 한다."""
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        inst = client.post("/api/v1/instruments", json={"name": "테스트"}).json()
+        detail_before = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail_before["atr"] is None
+
+        client.patch(f"/api/v1/instruments/{inst['id']}", json={"kis_code": "005930", "kis_market": "KRX"})
+        detail_after = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail_after["atr"] is not None
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
+def test_update_settings_does_not_overwrite_existing_atr(client):
+    """이미 ATR이 있는 종목의 설정을 저장할 때(배수만 바꾸는 경우 등) 기존
+    ATR을 덮어써서는 안 된다."""
+    from atrsite.config import settings
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    object.__setattr__(settings, "kis_app_key", "")
+    object.__setattr__(settings, "kis_app_secret", "")
+    try:
+        inst = client.post(
+            "/api/v1/instruments", json={"name": "테스트", "kis_code": "005930", "kis_market": "KRX"}
+        ).json()
+        # get_latest_atr()은 trade_date가 가장 최신인 행을 고른다 -- 방금 자동
+        # 백필된 KIS 더미 ATR의 trade_date보다 확실히 미래인 날짜를 써야
+        # 이 수동 값이 "최신"으로 남는다.
+        client.post(f"/api/v1/instruments/{inst['id']}/atr", json={"atr": 999.0, "trade_date": "2030-01-01"})
+        detail_before = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail_before["atr"]["atr"] == 999.0
+
+        # kis_code를 다시 포함해서 저장해도(예: 배수를 바꾸면서 그대로 다시
+        # 보냄) 이미 ATR이 있으면 백필 로직이 개입하면 안 된다.
+        client.patch(
+            f"/api/v1/instruments/{inst['id']}",
+            json={"buy_multiple": 1.5, "kis_code": "005930", "kis_market": "KRX"},
+        )
+        detail_after = client.get(f"/api/v1/instruments/{inst['id']}").json()
+        assert detail_after["atr"]["atr"] == 999.0  # 자동 백필로 덮어써지면 안 됨
+    finally:
+        object.__setattr__(settings, "kis_app_key", original_key)
+        object.__setattr__(settings, "kis_app_secret", original_secret)
+
+
 def test_api_key_enforced_when_configured(client):
     from atrsite.config import settings
     object.__setattr__(settings, "api_key", "secret123")
