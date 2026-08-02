@@ -86,9 +86,10 @@ export async function handleAddStockSave(ctx) {
   const name = el.addStockName.value.trim();
   if (!name) { ctx.showToast('종목명을 입력하세요.'); return; }
   const currency = el.addStockCurrency.value.trim() || 'KRW';
+  const kisCode = el.addStockKisCode.value.trim() || null;
   let instrument;
   try {
-    instrument = await api.createInstrument({ name, currency });
+    instrument = await api.createInstrument({ name, currency, kis_code: kisCode });
   } catch (e) {
     ctx.showToast('종목 추가 실패: ' + e.message);
     return;

@@ -38,7 +38,8 @@ function cacheDom() {
     'sticky-actions', 'btn-open-buy', 'btn-open-sell',
     'modal-tx', 'modal-tx-title', 'tx-executed-at', 'tx-price', 'tx-qty', 'tx-fee', 'tx-tax', 'tx-memo',
     'btn-tx-delete', 'btn-tx-cancel', 'btn-tx-save',
-    'modal-add-stock', 'add-stock-name', 'add-stock-currency', 'btn-add-stock-cancel', 'btn-add-stock-save',
+    'modal-add-stock', 'add-stock-name', 'add-stock-kis-code', 'add-stock-currency',
+    'btn-add-stock-cancel', 'btn-add-stock-save',
     'modal-deposit', 'modal-deposit-title', 'deposit-account-name', 'deposit-amount', 'deposit-currency',
     'btn-deposit-delete', 'btn-deposit-cancel', 'btn-deposit-save',
     'modal-confirm', 'confirm-message', 'confirm-cancel', 'confirm-ok',
@@ -143,6 +144,7 @@ function bindEvents() {
 
   el.btnAddStock.addEventListener('click', () => {
     el.addStockName.value = '';
+    el.addStockKisCode.value = '';
     el.addStockCurrency.value = 'KRW';
     el.modalAddStock.hidden = false;
   });
