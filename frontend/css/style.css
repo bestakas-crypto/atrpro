@@ -98,6 +98,11 @@ input[type="number"] {
   font-size: 18px;
   cursor: pointer;
   border-radius: var(--radius-sm);
+  /* <a class="icon-btn">(보고서 링크)도 <button>과 똑같이 보이게 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .icon-btn:active {

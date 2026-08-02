@@ -154,6 +154,17 @@ def test_dashboard_totals_with_fx(client):
     assert dash["totals"]["missing_cost_count"] == 0
 
 
+def test_dashboard_includes_atr_per_instrument(client):
+    """보고서(2026-08-02 추가)가 종목별 ATR을 표시하려면 대시보드 응답에
+    필요 -- instrument_snapshot()에는 이미 있었지만 build_dashboard()의
+    행에는 빠져 있던 필드."""
+    inst = client.post("/api/v1/instruments", json={"name": "테스트"}).json()
+    client.post(f"/api/v1/instruments/{inst['id']}/atr", json={"atr": 12.5, "trade_date": "2026-01-01"})
+    dash = client.get("/api/v1/dashboard").json()
+    row = next(r for r in dash["instruments"] if r["instrument"]["id"] == inst["id"])
+    assert row["atr"]["atr"] == 12.5
+
+
 def test_acknowledge_signal_endpoint(client):
     inst = client.post("/api/v1/instruments", json={"name": "테스트", "buy_multiple": 1.0, "sell_multiple": 1.5, "stop_multiple": 2.0}).json()
     iid = inst["id"]

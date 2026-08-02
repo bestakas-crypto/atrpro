@@ -501,6 +501,7 @@ def build_dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             "position": position,
             "quote": quote,
             "signal": snapshot["signal"],
+            "atr": snapshot["atr"],
             "cost_basis": cost_basis,
             "eval_value": eval_value,
         })

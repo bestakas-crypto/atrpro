@@ -162,7 +162,7 @@ function renderDepositList(ctx, deposits) {
 // (2026-08-02 추가). TOTAL은 서버가 이미 원화로 환산해서 계산해주므로
 // dashboard.totals를 그대로 쓰면 되지만, KRW/USD는 "그 통화 자산만" 보는
 // 용도라 서버 왕복 없이 클라이언트에서 필터링한다.
-function computeNativeTotals(dashboard, currency) {
+export function computeNativeTotals(dashboard, currency) {
   const instruments = dashboard.instruments.filter((row) => row.instrument.currency === currency);
   const deposits = dashboard.deposits.filter((d) => d.currency === currency);
 

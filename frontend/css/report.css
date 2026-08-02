@@ -1,0 +1,126 @@
+/* 인쇄/PDF 저장용 보고서 전용 스타일 -- 항상 라이트 테마로 고정한다
+   (프린터/PDF는 화면에 보이는 그대로 나가므로 다크 테마를 쓰면 안 됨).
+   메인 앱의 style.css와는 완전히 독립적이다. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: #14181f;
+  background: #f2f3f5;
+}
+
+.report-toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d5d9e0;
+  z-index: 10;
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #d5d9e0;
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn-primary { background: #14181f; color: #fff; border-color: #14181f; }
+.btn-secondary { background: #fff; color: #14181f; }
+
+#report-root {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+  background: #ffffff;
+}
+
+#report-loading {
+  text-align: center;
+  color: #838b99;
+  padding: 40px 0;
+}
+
+.report-header {
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #14181f;
+}
+.report-header h1 { margin: 0 0 4px; font-size: 20px; }
+.report-header .report-meta { font-size: 12px; color: #4d5561; margin: 2px 0; }
+.report-header .report-disclaimer { font-size: 11px; color: #cf3a3a; margin-top: 6px; }
+
+.report-section { margin: 24px 0; page-break-inside: avoid; }
+.report-section h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #d5d9e0;
+}
+
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.report-summary-card {
+  border: 1px solid #d5d9e0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.report-summary-card .card-title { font-size: 12px; color: #4d5561; margin-bottom: 6px; font-weight: 600; }
+.report-summary-card .card-row { display: flex; justify-content: space-between; font-size: 12px; margin: 3px 0; }
+.report-summary-card .card-row .label { color: #4d5561; }
+.report-summary-card .card-row .value { font-family: "SFMono-Regular", Consolas, monospace; }
+
+table.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+table.report-table th, table.report-table td {
+  border: 1px solid #d5d9e0;
+  padding: 6px 8px;
+  text-align: right;
+}
+table.report-table th { background: #f2f3f5; font-weight: 600; }
+table.report-table td:first-child, table.report-table th:first-child { text-align: left; }
+table.report-table tbody tr { page-break-inside: avoid; }
+
+.mono { font-family: "SFMono-Regular", Consolas, monospace; }
+.pnl-pos { color: #1a9a52; }
+.pnl-neg { color: #cf3a3a; }
+
+.signal-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.signal-badge.buy { background: #e0f5e8; color: #1a9a52; }
+.signal-badge.profit { background: #fbebd9; color: #c06a0a; }
+.signal-badge.stop, .signal-badge.both { background: #fbe3e3; color: #cf3a3a; }
+.signal-badge.neutral { background: #f2f3f5; color: #4d5561; }
+
+.report-empty-note { font-size: 12px; color: #838b99; padding: 8px 0; }
+
+.report-footer {
+  margin-top: 30px;
+  padding-top: 10px;
+  border-top: 1px solid #d5d9e0;
+  font-size: 11px;
+  color: #838b99;
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; }
+  #report-root { max-width: none; padding: 0; }
+  .report-section { page-break-inside: avoid; }
+}
