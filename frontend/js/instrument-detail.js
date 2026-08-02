@@ -17,6 +17,12 @@ const SIGNAL_TEXT = {
   NEUTRAL: { cls: 'signal-yellow', text: '🟡 관망 구간' },
 };
 
+// 이 상태들은 "확인" 없이 가격이 반등한다고 조용히 배너가 사라지면 안 된다
+// (사용자 결정, 2026-08-02) -- 사람이 직접 확인 버튼을 눌러야 꺼진다.
+const TRIGGER_STATUSES = new Set([
+  'BUY_TRIGGERED', 'TAKE_PROFIT_TRIGGERED', 'STOP_TRIGGERED', 'SELL_BOTH_TRIGGERED',
+]);
+
 function computeDrawdownLevels(postEntryHigh) {
   if (postEntryHigh == null) return [];
   return DRAWDOWN_THRESHOLDS.map((pct) => ({ pct, price: postEntryHigh * (1 - pct / 100) }));
@@ -89,12 +95,19 @@ export function renderDetail(ctx) {
   el.dTrailingStop.textContent = instrument.trailing_stop_price != null ? formatPrice(instrument.trailing_stop_price) : '-';
 
   const signalInfo = signal ? SIGNAL_TEXT[signal.status] : null;
-  if (signalInfo) {
+  const isTrigger = !!signal && TRIGGER_STATUSES.has(signal.status);
+  const isAcknowledged = isTrigger && signal.latest_event_id != null
+    && signal.acknowledged_event_id === signal.latest_event_id;
+
+  if (signalInfo && !isAcknowledged) {
     el.signalBanner.hidden = false;
     el.signalBanner.className = 'signal-banner ' + signalInfo.cls;
     el.signalText.textContent = signalInfo.text;
+    el.btnSignalAcknowledge.hidden = !isTrigger; // 관망 신호는 확인할 게 없음
+    el.signalAcknowledgedNote.hidden = true;
   } else {
     el.signalBanner.hidden = true;
+    el.signalAcknowledgedNote.hidden = !isAcknowledged;
   }
 
   renderDrawdown(ctx, instrument, currentPrice);
@@ -306,6 +319,19 @@ export async function commitAutoUpdateHigh(ctx) {
   } catch (e) {
     ctx.showToast('설정 저장 실패: ' + e.message);
   }
+}
+
+export async function acknowledgeSignal(ctx) {
+  const { state } = ctx;
+  if (!state.currentInstrument) return;
+  try {
+    await api.acknowledgeSignal(state.currentInstrument.instrument.id);
+  } catch (e) {
+    ctx.showToast('확인 처리 실패: ' + e.message);
+    return;
+  }
+  await loadAndRenderDetail(ctx, state.currentInstrument.instrument.id);
+  ctx.showToast('확인했습니다.');
 }
 
 export async function handleSaveSettings(ctx) {

@@ -154,6 +154,33 @@ def test_dashboard_totals_with_fx(client):
     assert dash["totals"]["missing_cost_count"] == 0
 
 
+def test_acknowledge_signal_endpoint(client):
+    inst = client.post("/api/v1/instruments", json={"name": "테스트", "buy_multiple": 1.0, "sell_multiple": 1.5, "stop_multiple": 2.0}).json()
+    iid = inst["id"]
+    client.post(f"/api/v1/instruments/{iid}/trades", json={
+        "trade_type": "buy", "price": 100, "quantity": 10, "executed_at": "2026-01-01T09:00:00",
+    })
+    client.post(f"/api/v1/instruments/{iid}/atr", json={"atr": 10, "trade_date": "2026-01-01"})
+    client.post(f"/api/v1/instruments/{iid}/quote", json={"price": 79})  # 손절선 80 이하
+
+    detail = client.get(f"/api/v1/instruments/{iid}").json()
+    assert detail["signal"]["status"] == "STOP_TRIGGERED"
+    assert detail["signal"]["acknowledged_event_id"] is None
+
+    resp = client.post(f"/api/v1/instruments/{iid}/acknowledge")
+    assert resp.status_code == 200
+    assert resp.json()["acknowledged_event_id"] == resp.json()["latest_event_id"]
+
+    detail_after = client.get(f"/api/v1/instruments/{iid}").json()
+    assert detail_after["signal"]["status"] == "STOP_TRIGGERED"  # 상태 자체는 그대로
+    assert detail_after["signal"]["acknowledged_event_id"] == detail_after["signal"]["latest_event_id"]
+
+
+def test_acknowledge_signal_404_for_unknown_instrument(client):
+    resp = client.post("/api/v1/instruments/does-not-exist/acknowledge")
+    assert resp.status_code == 404
+
+
 def test_api_key_enforced_when_configured(client):
     from atrsite.config import settings
     object.__setattr__(settings, "api_key", "secret123")

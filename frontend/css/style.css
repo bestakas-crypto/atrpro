@@ -646,10 +646,38 @@ input:focus {
   font-weight: 700;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border: 1px solid var(--border);
 }
 
 .signal-banner[hidden] {
+  display: none;
+}
+
+.btn-signal-ack {
+  flex-shrink: 0;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btn-signal-ack[hidden] {
+  display: none;
+}
+
+.signal-acknowledged-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: -6px 0 12px;
+}
+
+.signal-acknowledged-note[hidden] {
   display: none;
 }
 

@@ -7,7 +7,7 @@ import { loadAndRenderList, autoFetchFxRates } from './dashboard.js';
 import {
   loadAndRenderDetail, renderDetail, updateCustomPctResult, commitCurrentPrice, commitAtr,
   commitPostHigh, commitAutoUpdateHigh, handleSaveSettings, handleResetStock, handleDeleteStock,
-  handleQuickDeleteStock,
+  handleQuickDeleteStock, acknowledgeSignal,
 } from './instrument-detail.js';
 import { openTxModal, closeTxModal, handleTxSave, handleTxDelete, handleAddStockSave } from './trade-form.js';
 import { openAddDepositModal, openEditDepositModal, closeDepositModal, handleDepositSave, handleDepositDelete } from './deposits.js';
@@ -25,7 +25,7 @@ function cacheDom() {
     'currency-switch', 'fx-status', 'fx-rate-rows', 'btn-fx-refresh', 'btn-fx-save',
     'stock-list', 'stock-list-empty', 'deposit-list', 'deposit-list-empty',
     'view-detail', 'd-avg-price', 'd-qty', 'd-cost-basis', 'd-pnl',
-    'signal-banner', 'signal-text',
+    'signal-banner', 'signal-text', 'btn-signal-acknowledge', 'signal-acknowledged-note',
     'input-current-price', 'input-atr', 'input-post-high', 'input-auto-update-high',
     'd-next-buy', 'd-take-profit', 'd-trailing-stop',
     'drawdown-current-line', 'btn-toggle-drawdown', 'drawdown-table-wrap', 'drawdown-body',
@@ -217,6 +217,7 @@ function bindEvents() {
   el.inputAtr.addEventListener('input', () => renderDetail(ctx));
   el.inputAtr.addEventListener('change', () => commitAtr(ctx));
   el.inputPostHigh.addEventListener('change', () => commitPostHigh(ctx));
+  el.btnSignalAcknowledge.addEventListener('click', () => acknowledgeSignal(ctx));
   el.inputAutoUpdateHigh.addEventListener('change', () => commitAutoUpdateHigh(ctx));
 
   el.btnToggleDrawdown.addEventListener('click', () => {

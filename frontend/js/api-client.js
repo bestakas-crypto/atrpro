@@ -86,6 +86,7 @@ export const api = {
   commitAtr: (id, atr, tradeDate) => request('POST', `/api/v1/instruments/${id}/atr`, { atr, trade_date: tradeDate }),
   resetInstrument: (id) => request('POST', `/api/v1/instruments/${id}/reset`),
   deleteInstrument: (id) => request('DELETE', `/api/v1/instruments/${id}`),
+  acknowledgeSignal: (id) => request('POST', `/api/v1/instruments/${id}/acknowledge`),
 
   createTrade: (instrumentId, body) => request('POST', `/api/v1/instruments/${instrumentId}/trades`, body),
   updateTrade: (instrumentId, tradeId, body) => request('PATCH', `/api/v1/instruments/${instrumentId}/trades/${tradeId}`, body),

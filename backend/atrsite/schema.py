@@ -111,14 +111,20 @@ DDL_STATEMENTS: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS signal_state (
-        instrument_id       TEXT PRIMARY KEY REFERENCES instruments(id) ON DELETE CASCADE,
-        status               TEXT NOT NULL,
-        data_status          TEXT NOT NULL,
-        next_buy_price       REAL,
-        take_profit_price    REAL,
-        trailing_stop_price  REAL,
+        instrument_id        TEXT PRIMARY KEY REFERENCES instruments(id) ON DELETE CASCADE,
+        status                TEXT NOT NULL,
+        data_status           TEXT NOT NULL,
+        next_buy_price        REAL,
+        take_profit_price     REAL,
+        trailing_stop_price   REAL,
         reason                TEXT,
-        computed_at           TEXT NOT NULL
+        computed_at           TEXT NOT NULL,
+        -- 가장 최근 signal_events.id (상태 전환마다 갱신). 사용자가 "확인"을
+        -- 누르면 acknowledged_event_id를 이 값으로 맞춰서 배너를 끈다. 이후
+        -- 같은 상태가 계속돼도(새 이벤트가 안 생기므로) 다시 안 뜨고, 상태가
+        -- 실제로 또 바뀌면(새 이벤트) 다시 미확인 상태가 되어 배너가 뜬다.
+        latest_event_id       INTEGER,
+        acknowledged_event_id INTEGER
     )
     """,
     """

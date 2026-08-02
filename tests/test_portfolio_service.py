@@ -229,3 +229,75 @@ def test_consecutive_kis_failures_force_api_error_status(db_conn):
         market_data_repo.record_quote_failure(db_conn, inst["id"])
     signal = portfolio_service.recompute_signal(db_conn, inst["id"])
     assert signal["data_status"] == "API_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# 신호 확인(acknowledge) -- 손절 등 트리거 신호는 가격 반등으로 자동으로
+# 조용히 사라지면 안 되고, 사람이 직접 확인해야 사라진다는 사용자 결정
+# (2026-08-02)에 따른 기능.
+# ---------------------------------------------------------------------------
+
+def test_new_trigger_signal_starts_unacknowledged(db_conn):
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+    signal = portfolio_service.commit_quote(db_conn, inst["id"], price=79)  # 손절선 80 이하 -> STOP_TRIGGERED
+    snapshot = portfolio_service.instrument_snapshot(db_conn, inst["id"])
+    assert snapshot["signal"]["status"] == "STOP_TRIGGERED"
+    assert snapshot["signal"]["latest_event_id"] is not None
+    assert snapshot["signal"]["acknowledged_event_id"] is None  # 아직 미확인
+
+
+def test_acknowledge_matches_latest_event_and_price_flicker_does_not_reopen_it(db_conn):
+    """확인을 누르면 acknowledged_event_id가 latest_event_id와 같아진다.
+    이후 같은 상태가 계속 반복 계산돼도(새 이벤트가 안 생기므로) 미확인으로
+    되돌아가면 안 된다 -- 매 폴링마다 배너가 다시 뜨는 걸 방지."""
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=79)  # STOP_TRIGGERED
+
+    acked = portfolio_service.acknowledge_signal(db_conn, inst["id"])
+    assert acked["acknowledged_event_id"] == acked["latest_event_id"]
+
+    # 가격이 살짝 흔들려도(여전히 손절선 이하) 같은 상태가 반복 계산될 뿐이므로
+    # latest_event_id가 안 바뀌고, 따라서 확인 상태도 그대로 유지돼야 한다.
+    portfolio_service.commit_quote(db_conn, inst["id"], price=78)
+    still_acked = portfolio_service.instrument_snapshot(db_conn, inst["id"])["signal"]
+    assert still_acked["status"] == "STOP_TRIGGERED"
+    assert still_acked["acknowledged_event_id"] == still_acked["latest_event_id"]
+
+
+def test_new_episode_after_acknowledge_becomes_unacknowledged_again(db_conn):
+    """확인한 뒤에 상태가 실제로 바뀌었다가(예: 관망) 다시 손절 조건을 충족하면
+    -- 새 이벤트이므로 -- 다시 미확인 상태로 배너가 떠야 한다."""
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=79)  # STOP_TRIGGERED
+    portfolio_service.acknowledge_signal(db_conn, inst["id"])
+
+    portfolio_service.commit_quote(db_conn, inst["id"], price=95)  # 손절선(80)/익절가(115) 다 벗어남 -> NEUTRAL
+    neutral_signal = portfolio_service.instrument_snapshot(db_conn, inst["id"])["signal"]
+    assert neutral_signal["status"] == "NEUTRAL"
+
+    portfolio_service.commit_quote(db_conn, inst["id"], price=79)  # 다시 STOP_TRIGGERED -- 새 사이클
+    reopened = portfolio_service.instrument_snapshot(db_conn, inst["id"])["signal"]
+    assert reopened["status"] == "STOP_TRIGGERED"
+    assert reopened["acknowledged_event_id"] != reopened["latest_event_id"]  # 다시 미확인
+
+
+def test_acknowledge_does_not_change_computed_status_or_thresholds(db_conn):
+    """확인은 배너 표시 여부만 바꿀 뿐, 계산된 손절선/신호 상태 자체는 그대로여야
+    한다 -- 손절선 표시가 사라지거나 잘못된 값이 되면 안 됨."""
+    inst = _make_instrument(db_conn)
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(db_conn, inst["id"], atr=10, trade_date="2026-01-01")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=79)
+
+    before = portfolio_service.instrument_snapshot(db_conn, inst["id"])
+    portfolio_service.acknowledge_signal(db_conn, inst["id"])
+    after = portfolio_service.instrument_snapshot(db_conn, inst["id"])
+
+    assert after["signal"]["status"] == before["signal"]["status"] == "STOP_TRIGGERED"
+    assert after["instrument"]["trailing_stop_price"] == before["instrument"]["trailing_stop_price"]

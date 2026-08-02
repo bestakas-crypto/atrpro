@@ -88,6 +88,16 @@ def commit_atr(instrument_id: str, body: AtrCommit, conn: sqlite3.Connection = D
     return portfolio_service.commit_manual_atr(conn, instrument_id, atr=body.atr, trade_date=trade_date)
 
 
+@router.post("/{instrument_id}/acknowledge")
+def acknowledge_signal(instrument_id: str, conn: sqlite3.Connection = Depends(get_conn)):
+    """사용자가 신호 배너를 "확인"함 -- 스펙 9.4 관련, 손절 등 트리거 신호를
+    가격 히스테리시스로 자동 해제하지 않고 사람이 직접 확인해야 사라지게
+    하기로 한 결정(2026-08-02)에 따른 엔드포인트."""
+    if instruments_repo.get_instrument(conn, instrument_id) is None:
+        raise HTTPException(status_code=404, detail="instrument not found")
+    return portfolio_service.acknowledge_signal(conn, instrument_id)
+
+
 @router.post("/{instrument_id}/reset")
 def reset_instrument(instrument_id: str, conn: sqlite3.Connection = Depends(get_conn)):
     if instruments_repo.get_instrument(conn, instrument_id) is None:

@@ -125,6 +125,17 @@ def recompute_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, 
         was_hit_buy=was_hit_buy, was_hit_profit=was_hit_profit, was_hit_stop=was_hit_stop,
     )
 
+    is_new_episode = should_emit_event(previous_status, result.status)
+    event_id: Optional[int] = None
+    if is_new_episode:
+        # signal_state보다 먼저 이벤트를 만들어서 그 id를 latest_event_id로
+        # 같이 저장한다 -- "확인" 기능이 이 id로 미확인 여부를 판정한다.
+        event_id = signals_repo.record_signal_event(
+            conn, instrument_id,
+            previous_status=previous_status.value if previous_status else None,
+            new_status=result.status.value,
+        )
+
     new_state = signals_repo.upsert_signal_state(
         conn,
         instrument_id,
@@ -134,14 +145,10 @@ def recompute_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, 
         take_profit_price=take_profit_price,
         trailing_stop_price=instrument["trailing_stop_price"],
         reason=result.reason,
+        latest_event_id=event_id,
     )
 
-    if should_emit_event(previous_status, result.status):
-        event_id = signals_repo.record_signal_event(
-            conn, instrument_id,
-            previous_status=previous_status.value if previous_status else None,
-            new_status=result.status.value,
-        )
+    if is_new_episode:
         # 스펙 12.1 -- signal_events와 notification_outbox는 같은 트랜잭션에서 함께 기록한다.
         notification_service.enqueue_signal_notification(
             conn, event_id=event_id, instrument=instrument, position=position,
@@ -149,6 +156,19 @@ def recompute_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, 
         )
 
     return new_state
+
+
+def acknowledge_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any] | None:
+    """사용자가 종목 상세에서 "확인"을 누른 것 -- 신호 배너를 끈다 (2026-08-02
+    추가, 사용자 결정: 손절 등 트리거 신호는 가격이 반등한다고 자동으로
+    조용히 사라지면 안 되고, 사람이 직접 확인해야 사라진다).
+
+    상태 자체(signal_state.status)는 건드리지 않는다 -- 계속 STOP_TRIGGERED로
+    계산되더라도(레칫/기준가 표시는 그대로 정확해야 하므로), acknowledged_event_id
+    만 최신으로 맞춰서 프런트엔드가 배너를 숨기도록 한다. 이후 상태가 실제로
+    또 바뀌면(새 signal_event) 다시 미확인 상태가 되어 배너가 뜬다.
+    """
+    return signals_repo.acknowledge_signal(conn, instrument_id)
 
 
 def _apply_ratchet(conn: sqlite3.Connection, instrument_id: str) -> None:
