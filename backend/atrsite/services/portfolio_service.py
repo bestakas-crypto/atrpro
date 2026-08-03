@@ -356,7 +356,9 @@ def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str,
 
     client = get_client()
     try:
-        quote = client.get_current_price(instrument["kis_code"], market=instrument["kis_market"])
+        quote = client.get_current_price(
+            instrument["kis_code"], market=instrument["kis_market"], is_etf=instrument["is_etf"],
+        )
     except KisApiError as exc:
         raise RefreshQuoteError(f"KIS 시세 조회 실패: {exc}") from exc
 
@@ -428,7 +430,9 @@ def backfill_atr_now(conn: sqlite3.Connection, instrument_id: str) -> None:
     end = date.today().isoformat()
     start = (date.today() - timedelta(days=60)).isoformat()
     try:
-        bars = client.get_daily_bars(instrument["kis_code"], start, end, market=instrument["kis_market"])
+        bars = client.get_daily_bars(
+            instrument["kis_code"], start, end, market=instrument["kis_market"], is_etf=instrument["is_etf"],
+        )
         point = latest_atr(bars, period=14)
     except (KisApiError, InsufficientDataError):
         return

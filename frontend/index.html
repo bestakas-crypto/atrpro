@@ -249,6 +249,12 @@
           <option value="AMS">아멕스 (AMS)</option>
         </select>
       </div>
+      <div class="field-group">
+        <label class="toggle-inline">
+          <input type="checkbox" id="settings-is-etf" />
+          ETF (국내, NXT 미상장 -- 항상 KRX 기준 시세 조회)
+        </label>
+      </div>
       <button id="btn-save-settings" class="btn btn-secondary btn-block">설정 저장</button>
       <div class="settings-danger-zone">
         <button id="btn-reset-stock" class="btn btn-danger btn-block">종목 초기화 (거래이력 전체 삭제)</button>
@@ -326,6 +332,12 @@
     <div class="field-group">
       <label for="add-stock-currency">통화</label>
       <input type="text" id="add-stock-currency" value="KRW" />
+    </div>
+    <div class="field-group">
+      <label class="toggle-inline">
+        <input type="checkbox" id="add-stock-is-etf" />
+        ETF (국내, NXT 미상장 -- 항상 KRX 기준 시세 조회)
+      </label>
     </div>
     <div class="modal-actions">
       <button id="btn-add-stock-cancel" class="btn btn-secondary">취소</button>

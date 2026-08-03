@@ -11,11 +11,20 @@
 섹션 구조를 그대로 흉내낸다.
 """
 import time
+from datetime import datetime
 
 import httpx
 import pytest
 
-from atrsite.adapters.kis_client import KisApiError, KisClient, RateLimiter, TokenCache
+from atrsite.adapters.kis_client import (
+    FID_MARKET_DIV_KRX,
+    FID_MARKET_DIV_NXT,
+    KisApiError,
+    KisClient,
+    RateLimiter,
+    TokenCache,
+    resolve_market_div_code,
+)
 from atrsite.config import settings
 from atrsite.services.atr_engine import compute_wilder_atr
 
@@ -75,6 +84,62 @@ def _client_with_captured_request(get_payload):
 
     client._http.get = fake_get
     return client, captured
+
+
+# ---------------------------------------------------------------------------
+# FID_COND_MRKT_DIV_CODE(KRX/NXT) 라우팅 -- 사용자 확정 규칙(2026-08-04):
+# ETF는 NXT 미상장이라 항상 KRX, 그 외 종목은 09:00~16:00 KST엔 무조건 KRX,
+# 그 외 시간엔 NXT. "더 좋은 가격"(통합/UN) 기준이 아니라 시간대 고정 라우팅.
+# ---------------------------------------------------------------------------
+
+def test_resolve_market_div_code_etf_always_krx_regardless_of_time():
+    morning = datetime(2026, 8, 4, 10, 0)
+    night = datetime(2026, 8, 4, 21, 0)
+    assert resolve_market_div_code(is_etf=True, now=morning) == FID_MARKET_DIV_KRX
+    assert resolve_market_div_code(is_etf=True, now=night) == FID_MARKET_DIV_KRX
+
+
+def test_resolve_market_div_code_regular_hours_use_krx():
+    at_open = datetime(2026, 8, 4, 9, 0)
+    midday = datetime(2026, 8, 4, 12, 30)
+    just_before_close = datetime(2026, 8, 4, 15, 59, 59)
+    for now in (at_open, midday, just_before_close):
+        assert resolve_market_div_code(is_etf=False, now=now) == FID_MARKET_DIV_KRX
+
+
+def test_resolve_market_div_code_outside_regular_hours_uses_nxt():
+    before_open = datetime(2026, 8, 4, 8, 30)
+    at_close_boundary = datetime(2026, 8, 4, 16, 0)  # 16:00 정각부터는 NXT(경계는 KRX 쪽 포함, < 로 배타)
+    evening = datetime(2026, 8, 4, 19, 0)
+    for now in (before_open, at_close_boundary, evening):
+        assert resolve_market_div_code(is_etf=False, now=now) == FID_MARKET_DIV_NXT
+
+
+def test_get_current_price_domestic_etf_sends_krx_market_div_code(fake_credentials):
+    """ETF는 실제 요청 파라미터에도 항상 KRX(J)가 실려야 한다 -- 현재 시각과 무관."""
+    client, captured = _client_with_captured_request({
+        "rt_cd": "0",
+        "output": {"stck_prpr": "10000", "stck_hgpr": "10200", "prdy_ctrt": "0.5"},
+    })
+    try:
+        client.get_current_price("069500", is_etf=True)
+        assert captured["params"]["FID_COND_MRKT_DIV_CODE"] == FID_MARKET_DIV_KRX
+    finally:
+        client.close()
+
+
+def test_get_daily_bars_domestic_etf_sends_krx_market_div_code(fake_credentials):
+    client, captured = _client_with_captured_request({
+        "rt_cd": "0",
+        "output2": [
+            {"stck_bsop_date": "20260502", "stck_hgpr": "113000", "stck_lwpr": "111000", "stck_clpr": "112000"},
+        ],
+    })
+    try:
+        client.get_daily_bars("069500", "2026-05-01", "2026-05-02", is_etf=True)
+        assert captured["params"]["FID_COND_MRKT_DIV_CODE"] == FID_MARKET_DIV_KRX
+    finally:
+        client.close()
 
 
 def test_rate_limiter_enforces_minimum_interval():

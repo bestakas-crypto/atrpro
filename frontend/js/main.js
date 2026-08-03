@@ -35,11 +35,13 @@ function cacheDom() {
     'tx-body', 'tx-empty', 'btn-toggle-tx-all',
     'settings-details', 'settings-name', 'settings-currency', 'settings-buy-mult', 'settings-sell-mult',
     'settings-stop-mult', 'settings-tranche-amount', 'settings-kis-code', 'settings-kis-market',
+    'settings-is-etf',
     'btn-save-settings', 'btn-reset-stock', 'btn-delete-stock',
     'sticky-actions', 'btn-open-buy', 'btn-open-sell',
     'modal-tx', 'modal-tx-title', 'tx-executed-at', 'tx-price', 'tx-qty', 'tx-fee', 'tx-tax', 'tx-memo',
     'btn-tx-delete', 'btn-tx-cancel', 'btn-tx-save',
     'modal-add-stock', 'add-stock-name', 'add-stock-kis-code', 'add-stock-kis-market', 'add-stock-currency',
+    'add-stock-is-etf',
     'btn-add-stock-cancel', 'btn-add-stock-save',
     'modal-deposit', 'modal-deposit-title', 'deposit-account-name', 'deposit-amount', 'deposit-currency',
     'btn-deposit-delete', 'btn-deposit-cancel', 'btn-deposit-save',
@@ -156,6 +158,7 @@ function bindEvents() {
     el.addStockKisCode.value = '';
     el.addStockKisMarket.value = 'KRX';
     el.addStockCurrency.value = 'KRW';
+    el.addStockIsEtf.checked = false;
     el.modalAddStock.hidden = false;
   });
   el.btnAddStockCancel.addEventListener('click', () => { el.modalAddStock.hidden = true; });

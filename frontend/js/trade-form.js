@@ -88,9 +88,10 @@ export async function handleAddStockSave(ctx) {
   const currency = el.addStockCurrency.value.trim() || 'KRW';
   const kisCode = el.addStockKisCode.value.trim() || null;
   const kisMarket = kisCode ? (el.addStockKisMarket.value || 'KRX') : null;
+  const isEtf = el.addStockIsEtf.checked;
   let instrument;
   try {
-    instrument = await api.createInstrument({ name, currency, kis_code: kisCode, kis_market: kisMarket });
+    instrument = await api.createInstrument({ name, currency, kis_code: kisCode, kis_market: kisMarket, is_etf: isEtf });
   } catch (e) {
     ctx.showToast('종목 추가 실패: ' + e.message);
     return;

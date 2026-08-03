@@ -28,6 +28,7 @@ def create_instrument(body: InstrumentCreate, conn: sqlite3.Connection = Depends
         conn, name=body.name, currency=body.currency,
         buy_multiple=body.buy_multiple, sell_multiple=body.sell_multiple, stop_multiple=body.stop_multiple,
         tranche_amount=body.tranche_amount, kis_code=body.kis_code, kis_market=body.kis_market,
+        is_etf=body.is_etf,
     )
     if body.kis_code:
         # 다음 장마감까지 기다리지 않고 최근 확정 일봉으로 ATR을 바로 채워둔다.
@@ -57,6 +58,7 @@ def update_settings(instrument_id: str, body: InstrumentSettingsUpdate, conn: sq
         conn, instrument_id, name=body.name, currency=body.currency,
         buy_multiple=body.buy_multiple, sell_multiple=body.sell_multiple, stop_multiple=body.stop_multiple,
         tranche_amount=body.tranche_amount, kis_code=body.kis_code, kis_market=body.kis_market,
+        is_etf=body.is_etf,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="instrument not found")

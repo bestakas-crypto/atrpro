@@ -27,6 +27,7 @@ DDL_STATEMENTS: list[str] = [
         currency               TEXT NOT NULL DEFAULT 'KRW',
         kis_code               TEXT,
         kis_market              TEXT,
+        is_etf                 INTEGER NOT NULL DEFAULT 0,
         auto_update_high       INTEGER NOT NULL DEFAULT 1,
         post_entry_high_price  REAL,
         trailing_stop_price    REAL,

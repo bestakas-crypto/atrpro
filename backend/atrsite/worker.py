@@ -43,7 +43,7 @@ def poll_quotes(conn: sqlite3.Connection) -> None:
             logger.debug("종목 %s(%s)에 kis_code가 없어 건너뜀", instrument["name"], instrument["id"])
             continue
         try:
-            quote = client.get_current_price(code, market=instrument["kis_market"])
+            quote = client.get_current_price(code, market=instrument["kis_market"], is_etf=instrument["is_etf"])
         except KisApiError as exc:
             logger.warning("현재가 조회 실패 instrument=%s: %s", instrument["name"], exc)
             # 스펙 17.3 "연속 3회 실패 -> API 장애" 카운터 갱신 + 즉시 재판정.
@@ -70,7 +70,9 @@ def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
         if not code:
             continue
         try:
-            bars = client.get_daily_bars(code, start, end, market=instrument["kis_market"])
+            bars = client.get_daily_bars(
+                code, start, end, market=instrument["kis_market"], is_etf=instrument["is_etf"],
+            )
         except KisApiError as exc:
             logger.warning("일봉 조회 실패 instrument=%s: %s", instrument["name"], exc)
             continue

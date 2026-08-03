@@ -51,6 +51,9 @@ def init_db(conn: sqlite3.Connection) -> None:
     # 2026-08-02 추가: 이미 만들어져 있던 quote_latest 테이블에 change_pct
     # 컬럼을 보충한다(신규 DB는 위 CREATE TABLE에 이미 포함돼 있어 no-op).
     _add_column_if_missing(conn, "quote_latest", "change_pct", "change_pct REAL")
+    # 2026-08-04 추가: NXT 장 반영을 위해 종목별 ETF 여부가 필요해짐(ETF는
+    # NXT에 상장되지 않아 항상 KRX 기준으로 조회해야 함).
+    _add_column_if_missing(conn, "instruments", "is_etf", "is_etf INTEGER NOT NULL DEFAULT 0")
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

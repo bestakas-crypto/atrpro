@@ -30,6 +30,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
 from typing import Optional
 
 import httpx
@@ -47,9 +48,27 @@ EP_CURRENT_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price"
 TR_DAILY_CHART_PRICE = "FHKST03010100"  # 국내주식기간별시세(일_주_월_년) [v1_국내주식-016]
 EP_DAILY_CHART_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 
-# FID_COND_MRKT_DIV_CODE -- "J:KRX, NX:NXT, UN:통합" (명세 그대로). 국내 상장
-# 종목은 KRX 기준으로 조회한다.
+# FID_COND_MRKT_DIV_CODE -- "J:KRX, NX:NXT, UN:통합" (명세 그대로).
 FID_MARKET_DIV_KRX = "J"
+FID_MARKET_DIV_NXT = "NX"
+
+# 사용자 확정 규칙(2026-08-04): ETF는 NXT에 상장되지 않으므로 시간과 무관하게
+# 항상 KRX. ETF가 아닌 종목은 정규장 시간(09:00~16:00 KST)엔 무조건 KRX,
+# 그 외 시간(NXT 프리마켓/애프터마켓)엔 NXT를 쓴다 -- "더 좋은 가격"(UN) 기준이
+# 아니라 시간대 고정 라우팅이다. 09:00/16:00은 KRX 정규장 마감(15:30,
+# market_schedule.py의 KST_REGULAR_CLOSE)과 일부러 다른 사용자 지정 값이라
+# 그대로 따른다(정규장~16:00 구간까지는 NXT를 참조하지 않겠다는 명시적 요구).
+_KRX_ONLY_WINDOW_START = dt_time(9, 0)
+_KRX_ONLY_WINDOW_END = dt_time(16, 0)
+
+
+def resolve_market_div_code(is_etf: bool, now: Optional[datetime] = None) -> str:
+    if is_etf:
+        return FID_MARKET_DIV_KRX
+    current = (now or datetime.now()).time()
+    if _KRX_ONLY_WINDOW_START <= current < _KRX_ONLY_WINDOW_END:
+        return FID_MARKET_DIV_KRX
+    return FID_MARKET_DIV_NXT
 
 # 해외주식 현재가상세 [v1_해외주식-029] / 기간별시세 [v1_해외주식-010].
 # KIS 공식 예제(examples_llm/overseas_stock)로 확인, 2026-08-02 QQQ로 실전 검증.
@@ -192,7 +211,9 @@ class KisClient:
             "custtype": "P",
         }
 
-    def get_current_price(self, instrument_code: str, market: Optional[str] = None) -> Quote:
+    def get_current_price(
+        self, instrument_code: str, market: Optional[str] = None, is_etf: bool = False,
+    ) -> Quote:
         """market이 국내(KRX)면 주식현재가 시세[v1_국내주식-008], 그 외(NAS 등
         해외 거래소코드)면 해외주식 현재가상세[v1_해외주식-029]를 쓴다."""
         self.rate_limiter.wait()
@@ -200,10 +221,10 @@ class KisClient:
             return _dummy_quote(instrument_code)
 
         if _is_domestic(market):
-            return self._get_domestic_price(instrument_code)
+            return self._get_domestic_price(instrument_code, is_etf=is_etf)
         return self._get_overseas_price(instrument_code, market)
 
-    def _get_domestic_price(self, instrument_code: str) -> Quote:
+    def _get_domestic_price(self, instrument_code: str, is_etf: bool = False) -> Quote:
         """주식현재가 시세 [v1_국내주식-008] (TR FHKST01010100).
 
         manual 폴더 명세 그대로: 요청은 FID_COND_MRKT_DIV_CODE(J)+FID_INPUT_ISCD,
@@ -215,7 +236,10 @@ class KisClient:
         body = self._get_json(
             self._base_url() + EP_CURRENT_PRICE,
             headers=self._headers(TR_CURRENT_PRICE),
-            params={"FID_COND_MRKT_DIV_CODE": FID_MARKET_DIV_KRX, "FID_INPUT_ISCD": instrument_code},
+            params={
+                "FID_COND_MRKT_DIV_CODE": resolve_market_div_code(is_etf),
+                "FID_INPUT_ISCD": instrument_code,
+            },
         )
         if body.get("rt_cd") != "0":
             raise KisApiError(
@@ -304,6 +328,7 @@ class KisClient:
 
     def get_daily_bars(
         self, instrument_code: str, start_date: str, end_date: str, market: Optional[str] = None,
+        is_etf: bool = False,
     ) -> list[DailyBar]:
         """market이 국내(KRX)면 국내주식기간별시세[v1_국내주식-016], 그 외면
         해외주식 기간별시세[v1_해외주식-010]를 쓴다."""
@@ -312,10 +337,12 @@ class KisClient:
             return _dummy_daily_bars(instrument_code, start_date, end_date)
 
         if _is_domestic(market):
-            return self._get_domestic_daily_bars(instrument_code, start_date, end_date)
+            return self._get_domestic_daily_bars(instrument_code, start_date, end_date, is_etf=is_etf)
         return self._get_overseas_daily_bars(instrument_code, end_date, market)
 
-    def _get_domestic_daily_bars(self, instrument_code: str, start_date: str, end_date: str) -> list[DailyBar]:
+    def _get_domestic_daily_bars(
+        self, instrument_code: str, start_date: str, end_date: str, is_etf: bool = False,
+    ) -> list[DailyBar]:
         """국내주식기간별시세(일_주_월_년) [v1_국내주식-016] (TR FHKST03010100).
 
         manual 폴더 명세 그대로: FID_PERIOD_DIV_CODE=D(일봉), FID_ORG_ADJ_PRC=0
@@ -328,7 +355,7 @@ class KisClient:
             self._base_url() + EP_DAILY_CHART_PRICE,
             headers=self._headers(TR_DAILY_CHART_PRICE),
             params={
-                "FID_COND_MRKT_DIV_CODE": FID_MARKET_DIV_KRX,
+                "FID_COND_MRKT_DIV_CODE": resolve_market_div_code(is_etf),
                 "FID_INPUT_ISCD": instrument_code,
                 "FID_INPUT_DATE_1": start_date.replace("-", ""),
                 "FID_INPUT_DATE_2": end_date.replace("-", ""),

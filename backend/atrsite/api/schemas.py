@@ -15,6 +15,7 @@ class InstrumentCreate(BaseModel):
     tranche_amount: Optional[float] = Field(default=None, ge=0)
     kis_code: Optional[str] = None
     kis_market: Optional[str] = None
+    is_etf: bool = False
 
 
 class InstrumentSettingsUpdate(BaseModel):
@@ -26,6 +27,7 @@ class InstrumentSettingsUpdate(BaseModel):
     tranche_amount: Optional[float] = Field(default=None, ge=0)
     kis_code: Optional[str] = None
     kis_market: Optional[str] = None
+    is_etf: Optional[bool] = None
 
 
 class InstrumentManualUpdate(BaseModel):

@@ -27,6 +27,7 @@ def _row_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "currency": row["currency"],
         "kis_code": row["kis_code"],
         "kis_market": row["kis_market"],
+        "is_etf": bool(row["is_etf"]),
         "auto_update_high": bool(row["auto_update_high"]),
         "post_entry_high_price": row["post_entry_high_price"],
         "trailing_stop_price": row["trailing_stop_price"],
@@ -51,17 +52,18 @@ def create_instrument(
     tranche_amount: float | None = None,
     kis_code: str | None = None,
     kis_market: str | None = None,
+    is_etf: bool = False,
 ) -> dict[str, Any]:
     instrument_id = new_id()
     now = utcnow_iso()
     conn.execute(
         """
         INSERT INTO instruments
-            (id, name, currency, kis_code, kis_market, auto_update_high,
+            (id, name, currency, kis_code, kis_market, is_etf, auto_update_high,
              post_entry_high_price, trailing_stop_price, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, NULL, NULL, 1, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 1, ?, ?)
         """,
-        (instrument_id, name, currency, kis_code, kis_market, now, now),
+        (instrument_id, name, currency, kis_code, kis_market, 1 if is_etf else 0, now, now),
     )
     conn.execute(
         """
@@ -108,20 +110,22 @@ def update_settings(
     tranche_amount: float | None = None,
     kis_code: str | None = None,
     kis_market: str | None = None,
+    is_etf: bool | None = None,
 ) -> dict[str, Any] | None:
     current = get_instrument(conn, instrument_id)
     if current is None:
         return None
     now = utcnow_iso()
 
-    if any(v is not None for v in (name, currency, kis_code, kis_market)):
+    if any(v is not None for v in (name, currency, kis_code, kis_market, is_etf)):
         conn.execute(
             "UPDATE instruments SET name = ?, currency = ?, kis_code = ?, kis_market = ?, "
-            "updated_at = ? WHERE id = ?",
+            "is_etf = ?, updated_at = ? WHERE id = ?",
             (name if name is not None else current["name"],
              currency if currency is not None else current["currency"],
              kis_code if kis_code is not None else current["kis_code"],
              kis_market if kis_market is not None else current["kis_market"],
+             (1 if is_etf else 0) if is_etf is not None else (1 if current["is_etf"] else 0),
              now, instrument_id),
         )
 
