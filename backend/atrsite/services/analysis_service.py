@@ -231,9 +231,14 @@ def run_briefing(conn: sqlite3.Connection, *, force: bool = False) -> dict[str, 
             STAGE1_SYSTEM_PROMPT, _build_stage1_prompt(),
             use_web_search=True, chain="stage1_search",
         )
+        # 웹서치 없는 호출의 기본 예산(MAX_TOKENS=2000)으로는 10항목 구조
+        # 전체를 다 못 채우고 잘리는 경우가 실제로 확인됨(2026-08-03,
+        # 실서버에서 161자짜리 반토막 브리핑이 저장된 걸 발견 -- 2단계
+        # 1순위가 제미나이로 바뀐 뒤 처음 재현됨). 종목탐구 20항목 응답에
+        # 적용했던 것과 같은 값(8000)으로 올림.
         response = llm_client.ask(
             SYSTEM_PROMPT, _build_stage2_prompt(snapshot, stage1.text),
-            use_web_search=False, chain="stage2_judgment",
+            use_web_search=False, chain="stage2_judgment", max_tokens=8000,
         )
 
     return analysis_repo.save_result(

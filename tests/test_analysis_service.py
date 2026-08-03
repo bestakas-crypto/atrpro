@@ -175,8 +175,8 @@ def test_run_briefing_two_stage_routing(db_conn, monkeypatch):
 
     calls = []
 
-    def fake_ask(system, user, *, use_web_search=False, chain=None):
-        calls.append({"chain": chain, "use_web_search": use_web_search})
+    def fake_ask(system, user, *, use_web_search=False, chain=None, max_tokens=None):
+        calls.append({"chain": chain, "use_web_search": use_web_search, "max_tokens": max_tokens})
         if chain == "stage1_search":
             return llm_client.LLMResponse(text="1단계 객관적 조회 결과", provider="gemini", model="gemini-test")
         return llm_client.LLMResponse(text="2단계 최종 브리핑", provider="gemini", model="gemini-test")
@@ -193,5 +193,9 @@ def test_run_briefing_two_stage_routing(db_conn, monkeypatch):
     assert calls[0]["chain"] == "stage1_search"
     assert calls[0]["use_web_search"] is True
     assert calls[1]["chain"] == "stage2_judgment"
+    # 2026-08-03 -- 실서버에서 161자짜리 반토막 브리핑이 저장된 걸 발견
+    # (기본 MAX_TOKENS=2000으로는 10항목 전체를 못 채우고 잘림). 종목탐구
+    # 20항목과 같은 예산(8000)을 명시적으로 주는지 검증.
+    assert calls[1]["max_tokens"] == 8000
     assert result["result_text"] == "2단계 최종 브리핑"
     assert result["provider"] == "gemini"
