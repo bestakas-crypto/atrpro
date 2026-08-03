@@ -1,0 +1,126 @@
+/* 오늘의 브리핑 전용 스타일 -- report.css처럼 메인 앱과 독립. 운전/이동 중
+   터치 한 번으로 쓰는 화면이라 버튼을 크게, 텍스트는 읽기 쉽게 만든다. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: #14181f;
+  background: #f2f3f5;
+  min-height: 100vh;
+}
+
+.briefing-toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d5d9e0;
+  z-index: 10;
+}
+
+.briefing-toolbar-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.btn {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #d5d9e0;
+  font-size: 14px;
+  cursor: pointer;
+  background: #fff;
+  color: #14181f;
+}
+
+#briefing-root {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 60px;
+}
+
+.btn-big-primary {
+  display: block;
+  width: 100%;
+  padding: 28px 16px;
+  font-size: 20px;
+  font-weight: 700;
+  border-radius: 16px;
+  border: none;
+  background: #14181f;
+  color: #fff;
+  cursor: pointer;
+}
+.btn-big-primary:active { background: #2a3140; }
+.btn-big-primary:disabled { background: #838b99; cursor: default; }
+
+.briefing-status {
+  text-align: center;
+  color: #4d5561;
+  padding: 20px 0;
+  font-size: 14px;
+}
+
+.briefing-result { margin-top: 20px; }
+
+/* VXN 그리드 매수 판정 -- Python이 확정한 값이라 LLM 서술과 시각적으로
+   분리해서 가장 먼저 보여준다. */
+.briefing-grid-rule {
+  background: #fbf0d9;
+  border: 1px solid #e3bd75;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.briefing-grid-rule-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #a06a0a;
+  margin-bottom: 6px;
+}
+.briefing-grid-rule-msg {
+  font-size: 16px;
+  font-weight: 600;
+  color: #14181f;
+}
+
+.briefing-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #838b99;
+  margin-bottom: 12px;
+}
+
+.briefing-provider-badge {
+  background: #e0f4f0;
+  color: #0e8a73;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.briefing-text {
+  background: #ffffff;
+  border: 1px solid #d5d9e0;
+  border-radius: 12px;
+  padding: 18px;
+  font-size: 16px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  body { background: #14181f; color: #e7eaef; }
+  .briefing-toolbar, .briefing-text { background: #1c2028; border-color: #2f3542; }
+  .btn { background: #1c2028; color: #e7eaef; border-color: #2f3542; }
+}

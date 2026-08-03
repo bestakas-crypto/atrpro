@@ -104,4 +104,7 @@ export const api = {
 
   importLegacy: (payload, { dryRun = true } = {}) =>
     request('POST', `/api/v1/legacy/import?dry_run=${dryRun ? '1' : '0'}`, payload),
+
+  runBriefing: (force = false) => request('POST', `/api/v1/analysis/run${force ? '?force=true' : ''}`),
+  getLatestBriefing: () => request('GET', '/api/v1/analysis/latest'),
 };

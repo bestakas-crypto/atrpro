@@ -283,6 +283,7 @@ input:focus {
 }
 
 /* ---------- View: List ---------- */
+
 .list-toolbar {
   display: flex;
   gap: 8px;

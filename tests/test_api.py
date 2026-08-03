@@ -330,3 +330,56 @@ def test_api_key_enforced_when_configured(client):
         assert resp.status_code == 200
     finally:
         object.__setattr__(settings, "api_key", "")
+
+
+@pytest.fixture()
+def force_llm_dummy_and_stub_vxn(monkeypatch):
+    """analysis API 테스트가 실제 LLM/VXN 네트워크를 타지 않게 막는다."""
+    from atrsite.adapters.market_index_client import IndexQuote
+    from atrsite.config import settings
+    from atrsite.services import analysis_service
+
+    original = (
+        settings.anthropic_api_key, settings.openai_api_key,
+        settings.gemini_api_key, settings.deepseek_api_key,
+    )
+    object.__setattr__(settings, "anthropic_api_key", "")
+    object.__setattr__(settings, "openai_api_key", "")
+    object.__setattr__(settings, "gemini_api_key", "")
+    object.__setattr__(settings, "deepseek_api_key", "")
+
+    def fake_fetch(symbol, label, *, http=None):
+        return IndexQuote(symbol=symbol, label=label, status="OK", value=26.0)
+
+    monkeypatch.setattr(analysis_service, "fetch_index", fake_fetch)
+    yield
+    object.__setattr__(settings, "anthropic_api_key", original[0])
+    object.__setattr__(settings, "openai_api_key", original[1])
+    object.__setattr__(settings, "gemini_api_key", original[2])
+    object.__setattr__(settings, "deepseek_api_key", original[3])
+
+
+def test_analysis_latest_404_before_any_run(client, force_llm_dummy_and_stub_vxn):
+    resp = client.get("/api/v1/analysis/latest")
+    assert resp.status_code == 404
+
+
+def test_analysis_run_and_latest(client, force_llm_dummy_and_stub_vxn):
+    resp = client.post("/api/v1/analysis/run")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "dummy"
+    assert "더미" in body["result_text"]
+
+    latest = client.get("/api/v1/analysis/latest")
+    assert latest.status_code == 200
+    assert latest.json()["id"] == body["id"]
+
+
+def test_analysis_run_reuses_cache_without_force(client, force_llm_dummy_and_stub_vxn):
+    first = client.post("/api/v1/analysis/run").json()
+    second = client.post("/api/v1/analysis/run").json()
+    assert second["id"] == first["id"]
+
+    third = client.post("/api/v1/analysis/run?force=true").json()
+    assert third["id"] != first["id"]

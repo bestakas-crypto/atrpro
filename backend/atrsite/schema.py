@@ -190,6 +190,16 @@ DDL_STATEMENTS: list[str] = [
         created_at   TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS analysis_results (
+        id            TEXT PRIMARY KEY,
+        created_at    TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        result_text   TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        model         TEXT NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument_id, executed_at, sequence_no)",
     "CREATE INDEX IF NOT EXISTS idx_daily_bars_instrument ON daily_bars(instrument_id, trade_date)",
     "CREATE INDEX IF NOT EXISTS idx_atr_values_instrument ON atr_values(instrument_id, trade_date)",

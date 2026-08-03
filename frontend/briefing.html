@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>오늘의 브리핑</title>
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/briefing.css" />
+</head>
+<body>
+
+<div class="briefing-toolbar">
+  <button id="btn-close" class="btn btn-secondary" aria-label="닫기">← 닫기</button>
+  <span class="briefing-toolbar-title">오늘의 브리핑</span>
+</div>
+
+<main id="briefing-root">
+  <button id="btn-generate" class="btn-big-primary">오늘 브리핑 만들기</button>
+  <p id="briefing-status" class="briefing-status" hidden></p>
+  <div id="briefing-result" class="briefing-result" hidden>
+    <div id="briefing-grid-rule" class="briefing-grid-rule" hidden></div>
+    <div class="briefing-meta">
+      <span id="briefing-time"></span>
+      <span id="briefing-provider" class="briefing-provider-badge"></span>
+    </div>
+    <div id="briefing-text" class="briefing-text"></div>
+    <button id="btn-regenerate" class="btn btn-secondary">다시 만들기(최신 데이터로)</button>
+  </div>
+</main>
+
+<script type="module" src="js/briefing.js"></script>
+</body>
+</html>
