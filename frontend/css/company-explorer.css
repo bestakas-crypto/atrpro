@@ -186,3 +186,11 @@ section[hidden] { display: none; }
   .btn { background: #1c2028; color: #e7eaef; border-color: #2f3542; }
   #search-input { background: #1c2028; color: #e7eaef; border-color: #2f3542; }
 }
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; color: #14181f; }
+  #ce-root { max-width: none; padding: 0; }
+  .ce-result-text, .ce-glance-item { border: none; box-shadow: none; }
+  #btn-reanalyze, #btn-back-to-search { display: none; }
+}

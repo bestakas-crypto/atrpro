@@ -5,7 +5,7 @@ import { api } from './api-client.js';
 const el = {};
 function cacheDom() {
   const ids = [
-    'btn-close', 'search-input', 'btn-search', 'search-status', 'search-results', 'search-notices',
+    'btn-close', 'btn-print', 'search-input', 'btn-search', 'search-status', 'search-results', 'search-notices',
     'recent-section', 'recent-list',
     'view-search', 'view-confirm', 'view-progress', 'view-result',
     'confirm-card', 'btn-confirm-analyze', 'btn-confirm-back',
@@ -288,6 +288,7 @@ function bindEvents() {
     if (window.history.length > 1) window.history.back();
     else window.location.href = 'index.html';
   });
+  el.btnPrint.addEventListener('click', () => window.print());
   el.btnSearch.addEventListener('click', doSearch);
   el.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
@@ -312,3 +313,20 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// index.html을 거치지 않고 헤더 아이콘으로 이 페이지가 바로 새 탭에서
+// 열릴 수 있어서(target=_blank), 이 페이지 자체도 서비스워커 갱신을
+// 확인해야 한다 -- 안 그러면 배포 직후에도 예전 캐시된 api-client.js가
+// 계속 쓰여서 새로 추가된 API 함수가 "is not a function"으로 실패할 수
+// 있다(2026-08-03 실제 발생: 종목탐구 배포 직후 검색이 이 문제로 깨짐).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js').then((reg) => {
+    reg.update().catch(() => {});
+  }).catch(() => {});
+  let swRefreshed = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swRefreshed) return;
+    swRefreshed = true;
+    location.reload();
+  });
+}

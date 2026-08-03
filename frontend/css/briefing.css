@@ -124,3 +124,11 @@ body {
   .briefing-toolbar, .briefing-text { background: #1c2028; border-color: #2f3542; }
   .btn { background: #1c2028; color: #e7eaef; border-color: #2f3542; }
 }
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; color: #14181f; }
+  #briefing-root { max-width: none; padding: 0; }
+  .briefing-text, .briefing-grid-rule { border: none; box-shadow: none; }
+  #btn-generate { display: none; }
+}

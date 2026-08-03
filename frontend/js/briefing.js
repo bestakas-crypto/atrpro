@@ -4,6 +4,7 @@ import { api } from './api-client.js';
 
 const el = {
   btnClose: document.getElementById('btn-close'),
+  btnPrint: document.getElementById('btn-print'),
   btnGenerate: document.getElementById('btn-generate'),
   btnRegenerate: document.getElementById('btn-regenerate'),
   status: document.getElementById('briefing-status'),
@@ -78,6 +79,7 @@ async function generate(force) {
 
 el.btnGenerate.addEventListener('click', () => generate(false));
 el.btnRegenerate.addEventListener('click', () => generate(true));
+el.btnPrint.addEventListener('click', () => window.print());
 el.btnClose.addEventListener('click', () => {
   if (window.history.length > 1) window.history.back();
   else window.location.href = 'index.html';
@@ -92,3 +94,20 @@ el.btnClose.addEventListener('click', () => {
     // 404 등 -- 아직 브리핑이 없으면 "오늘 브리핑 만들기" 버튼만 보이는 초기 상태 그대로 둔다.
   }
 })();
+
+// index.html을 거치지 않고 헤더 아이콘으로 바로 이 페이지가 새 탭에서 열릴
+// 수 있어서(target=_blank), 이 페이지 자체도 서비스워커 갱신을 확인해야
+// 한다 -- 안 그러면 배포 직후에도 예전 캐시된 api-client.js가 계속 쓰여서
+// 새로 추가된 API 함수가 "is not a function"으로 실패할 수 있다(2026-08-03
+// 실제 발생: 종목탐구 배포 직후 이 문제로 검색이 깨짐).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js').then((reg) => {
+    reg.update().catch(() => {});
+  }).catch(() => {});
+  let swRefreshed = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swRefreshed) return;
+    swRefreshed = true;
+    location.reload();
+  });
+}
