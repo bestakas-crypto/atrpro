@@ -57,7 +57,7 @@ class LLMResponse:
     used_web_search: bool = False
 
 
-def _call_claude(system: str, user: str, *, use_web_search: bool, http: httpx.Client) -> LLMResponse:
+def _call_claude(system: str, user: str, *, use_web_search: bool, max_tokens: int, http: httpx.Client) -> LLMResponse:
     """Anthropic Messages API. web_search 도구는 Claude가 최신 뉴스를 직접
     검색하게 할 때만 켠다(사용자 요청: 뉴스는 LLM이 검색, 수치는 프로그램이
     검증해서 넘김 -- 이 함수 자체는 뉴스/수치 구분을 모르고 호출자가 결정)."""
@@ -68,7 +68,7 @@ def _call_claude(system: str, user: str, *, use_web_search: bool, http: httpx.Cl
     }
     body: dict = {
         "model": settings.llm_model_claude,
-        "max_tokens": WEB_SEARCH_MAX_TOKENS if use_web_search else MAX_TOKENS,
+        "max_tokens": max_tokens,
         "system": system,
         "messages": [{"role": "user", "content": user}],
     }
@@ -87,11 +87,11 @@ def _call_claude(system: str, user: str, *, use_web_search: bool, http: httpx.Cl
     return LLMResponse(text=text, provider="claude", model=settings.llm_model_claude, used_web_search=use_web_search)
 
 
-def _call_gpt(system: str, user: str, *, http: httpx.Client) -> LLMResponse:
+def _call_gpt(system: str, user: str, *, max_tokens: int, http: httpx.Client) -> LLMResponse:
     headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
     body = {
         "model": settings.llm_model_gpt,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": max_tokens,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }
     res = http.post(OPENAI_API_URL, headers=headers, json=body, timeout=60)
@@ -106,7 +106,7 @@ def _call_gpt(system: str, user: str, *, http: httpx.Client) -> LLMResponse:
     return LLMResponse(text=text, provider="gpt", model=settings.llm_model_gpt)
 
 
-def _call_deepseek(system: str, user: str, *, http: httpx.Client) -> LLMResponse:
+def _call_deepseek(system: str, user: str, *, max_tokens: int, http: httpx.Client) -> LLMResponse:
     """DeepSeek는 OpenAI 호환 chat completions API. 자체 웹서치 도구가 없어서
     (2026-08-03 확인) 1단계(실시간 조회)에는 못 쓰고, 2단계(이미 모은 데이터
     해석만 하는 단계, 검색 불필요)의 저렴한 폴백 후보 자리만 만들어둔다 --
@@ -114,7 +114,7 @@ def _call_deepseek(system: str, user: str, *, http: httpx.Client) -> LLMResponse
     headers = {"Authorization": f"Bearer {settings.deepseek_api_key}", "Content-Type": "application/json"}
     body = {
         "model": settings.llm_model_deepseek,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": max_tokens,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }
     res = http.post(DEEPSEEK_API_URL, headers=headers, json=body, timeout=60)
@@ -129,7 +129,7 @@ def _call_deepseek(system: str, user: str, *, http: httpx.Client) -> LLMResponse
     return LLMResponse(text=text, provider="deepseek", model=settings.llm_model_deepseek)
 
 
-def _call_gemini(system: str, user: str, *, use_web_search: bool, http: httpx.Client) -> LLMResponse:
+def _call_gemini(system: str, user: str, *, use_web_search: bool, max_tokens: int, http: httpx.Client) -> LLMResponse:
     """Gemini generateContent API. use_web_search=True면 google_search
     그라운딩 도구를 켠다(2026-08-03 추가 -- "객관적이고 판단이 필요없는
     조회는 제미나이" 지시에 따라 검색 지원 필요). Gemini의 정확한 도구
@@ -141,7 +141,7 @@ def _call_gemini(system: str, user: str, *, use_web_search: bool, http: httpx.Cl
     url = GEMINI_API_URL_TMPL.format(model=settings.llm_model_gemini)
     body: dict = {
         "contents": [{"parts": [{"text": f"{system}\n\nUser: {user}"}]}],
-        "generationConfig": {"maxOutputTokens": WEB_SEARCH_MAX_TOKENS if use_web_search else MAX_TOKENS},
+        "generationConfig": {"maxOutputTokens": max_tokens},
     }
     if use_web_search:
         body["tools"] = [{"google_search": {}}]
@@ -180,6 +180,7 @@ _FALLBACK_CHAINS = {
 
 def ask(
     system: str, user: str, *, use_web_search: bool = False, chain: Optional[str] = None,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     """기본 순서는 Claude -> GPT -> Gemini 폴백이지만, chain을 주면
     _FALLBACK_CHAINS에 정의된 단계별 전용 순서를 따른다(2026-08-03 추가 --
@@ -189,6 +190,13 @@ def ask(
     use_web_search는 Claude/Gemini에 적용된다(GPT/DeepSeek는 이 클라이언트에서
     별도 검색 도구를 안 붙임 -- 표준 chat completions에 쓸만한 웹서치 도구가
     없어서 생략).
+
+    max_tokens를 안 주면 use_web_search 여부로 MAX_TOKENS/WEB_SEARCH_MAX_TOKENS
+    중 하나를 자동 선택한다. 호출자가 원래 예상보다 긴 응답이 필요하다고
+    이미 아는 경우(예: 종목탐구의 20항목 분석 -- 매크로 브리핑의 10항목보다
+    구조적으로 길어서 검색 없이도 2000토큰으로는 부족함, 2026-08-03 실제
+    라이브 테스트 중 응답이 3줄에서 잘리는 걸 발견해서 추가) 명시적으로
+    더 크게 줄 수 있다.
 
     더미 모드일 때는 실제 호출 없이 명확히 "더미"라고 표시된 텍스트를
     반환한다 -- pytest 및 키 설정 전 로컬 개발에서 UI 배선을 확인할 수
@@ -207,6 +215,9 @@ def ask(
         )
 
     order = list(_FALLBACK_CHAINS.get(chain, _PROVIDER_ORDER))
+    effective_max_tokens = max_tokens if max_tokens is not None else (
+        WEB_SEARCH_MAX_TOKENS if use_web_search else MAX_TOKENS
+    )
 
     http = httpx.Client()
     last_exc: Optional[Exception] = None
@@ -214,25 +225,29 @@ def ask(
         for provider in order:
             if provider == "claude" and settings.anthropic_api_key:
                 try:
-                    return _call_claude(system, user, use_web_search=use_web_search, http=http)
+                    return _call_claude(
+                        system, user, use_web_search=use_web_search, max_tokens=effective_max_tokens, http=http,
+                    )
                 except Exception as exc:  # noqa: BLE001 -- 다음 공급자로 폴백
                     logger.warning("Claude 호출 실패, 다음 공급자로 폴백: %s", exc)
                     last_exc = exc
             elif provider == "gpt" and settings.openai_api_key:
                 try:
-                    return _call_gpt(system, user, http=http)
+                    return _call_gpt(system, user, max_tokens=effective_max_tokens, http=http)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GPT 호출 실패, 다음 공급자로 폴백: %s", exc)
                     last_exc = exc
             elif provider == "gemini" and settings.gemini_api_key:
                 try:
-                    return _call_gemini(system, user, use_web_search=use_web_search, http=http)
+                    return _call_gemini(
+                        system, user, use_web_search=use_web_search, max_tokens=effective_max_tokens, http=http,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Gemini 호출 실패: %s", exc)
                     last_exc = exc
             elif provider == "deepseek" and settings.deepseek_api_key:
                 try:
-                    return _call_deepseek(system, user, http=http)
+                    return _call_deepseek(system, user, max_tokens=effective_max_tokens, http=http)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("DeepSeek 호출 실패, 다음 공급자로 폴백: %s", exc)
                     last_exc = exc

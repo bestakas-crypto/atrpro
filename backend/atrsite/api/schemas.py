@@ -76,3 +76,15 @@ class DepositUpdate(BaseModel):
 class FxRateUpdate(BaseModel):
     rates: dict[str, float] = Field(default_factory=dict)
     display_currency: Optional[str] = None
+
+
+class CompanyResolveUS(BaseModel):
+    """스펙 4.2 "이 종목 분석" 확인 -- /company/search 결과 중 하나를 그대로
+    에코해서 실제 companies 행으로 만든다."""
+    cik: int
+    ticker: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
+class CompanyAnalysisRun(BaseModel):
+    company_id: str = Field(min_length=1)

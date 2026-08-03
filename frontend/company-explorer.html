@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>종목탐구</title>
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/company-explorer.css" />
+</head>
+<body>
+
+<div class="ce-toolbar">
+  <button id="btn-close" class="btn btn-secondary" aria-label="닫기">← 닫기</button>
+  <span class="ce-toolbar-title">종목탐구</span>
+</div>
+
+<main id="ce-root">
+
+  <!-- 1. 검색 화면 -->
+  <section id="view-search">
+    <div class="ce-search-row">
+      <input id="search-input" type="text" inputmode="search"
+             placeholder="종목명·티커·종목코드 입력 (예: MU, Micron, 삼성전자)" />
+      <button id="btn-search" class="btn btn-primary">검색</button>
+    </div>
+    <p id="search-status" class="ce-hint" hidden></p>
+    <div id="search-results" class="ce-result-list"></div>
+    <p id="search-notices" class="ce-notice" hidden></p>
+
+    <div id="recent-section" class="ce-recent-section" hidden>
+      <h3 class="ce-section-title">최근 분석</h3>
+      <div id="recent-list" class="ce-result-list"></div>
+    </div>
+  </section>
+
+  <!-- 2. 기업 확인 화면(스펙 4.2 -- 동명이인/ETF 오인 방지) -->
+  <section id="view-confirm" hidden>
+    <div id="confirm-card" class="ce-confirm-card"></div>
+    <button id="btn-confirm-analyze" class="btn-big-primary">이 종목 분석</button>
+    <button id="btn-confirm-back" class="btn btn-secondary btn-block">뒤로</button>
+  </section>
+
+  <!-- 3. 분석 진행 상태(폴링) -->
+  <section id="view-progress" hidden>
+    <p id="progress-status" class="ce-progress-status">분석 준비 중...</p>
+  </section>
+
+  <!-- 4. 결과 화면 -->
+  <section id="view-result" hidden>
+    <div id="result-glance" class="ce-glance"></div>
+    <div id="result-warnings" class="ce-warnings" hidden></div>
+    <div id="result-meta" class="ce-meta"></div>
+    <div id="result-text" class="ce-result-text"></div>
+    <button id="btn-reanalyze" class="btn btn-secondary btn-block">새로 분석(최신 데이터로)</button>
+    <button id="btn-back-to-search" class="btn btn-secondary btn-block">다른 종목 검색</button>
+  </section>
+
+</main>
+
+<script type="module" src="js/company-explorer.js"></script>
+</body>
+</html>

@@ -59,5 +59,16 @@ class Settings:
     # 없어서 flash를 기본값으로 함(2026-08-03, 사용자 제공 가격표 기준).
     llm_model_deepseek: str = os.environ.get("LLM_MODEL_DEEPSEEK", "deepseek-v4-flash")
 
+    # 2026-08-03 -- 종목탐구(company-explorer)용. SEC EDGAR는 키가 필요
+    # 없지만 공정이용 정책상 요청자 식별용 User-Agent(회사명+연락처)를
+    # 요구한다. 비워두면 동작은 하지만 SEC가 권장하는 "진짜 연락처"가
+    # 아니므로, 실사용량이 늘면 .env에 실제 연락처로 채우는 걸 권장.
+    sec_user_agent: str = os.environ.get(
+        "SEC_USER_AGENT", "ATRsite-pro/1.0 (personal use; contact-not-set@example.com)"
+    )
+    # OpenDART(한국 기업 공시)는 회원가입 후 발급받는 키가 필요 --
+    # 비어있으면 opendart_client.py가 항상 UNAVAILABLE로 응답(더미 모드).
+    opendart_api_key: str = os.environ.get("OPENDART_API_KEY", "")
+
 
 settings = Settings()

@@ -773,3 +773,307 @@
     (359px 지점)에 위치.
   - service-worker.js 캐시 v7 -> v8.
   - pytest 143개 그대로 통과(순수 레이아웃 변경이라 백엔드 무관).
+
+--------------------------------------------------------------------
+[LLM 매크로 브리핑 기능 -- 헤더 아이콘 하나로 오늘 시황 브리핑] (2026-08-03)
+--------------------------------------------------------------------
+  - 사용자 요청: "운전/이동 중에도 터치 한 번으로 그날의 매크로 수치·뉴스·
+    유념사항을 들을 수 있게" -- 별도 요청/응답 방식(자동 호출 없음).
+    C:\mmean의 LLM API 제반사항을 참고하되 직접 import는 안 함(두 프로젝트
+    독립 유지).
+  - 핵심 원칙: LLM이 수치를 스스로 찾거나 추측하지 않는다 -- Python이
+    검증된 수치(보유종목 현재가/등락률, 원달러 환율, VXN)를 먼저 모으고
+    LLM은 설명/요약/시나리오만 담당.
+  - adapters/llm_client.py 신규: Claude/GPT/Gemini/DeepSeek 4개 공급자,
+    ask(system, user, *, use_web_search, chain)로 호출. chain은 provider
+    이름이 아니라 "단계 이름"으로 키를 잡음(stage1_search/stage2_judgment)
+    -- 처음엔 provider 이름으로 키를 잡았다가, 1단계/2단계가 둘 다
+    Gemini로 시작하게 되면서(비용 문제로 클로드를 최후 폴백으로 내림)
+    같은 키로 다른 체인을 표현 못 하는 문제가 생겨 리팩터링함.
+    stage1_search(객관조회): gemini->gpt->claude. stage2_judgment(판단):
+    gemini->gpt->deepseek->claude(클로드가 가장 비싸서 최후 폴백).
+    DeepSeek는 자체 웹서치 도구가 없어서(api-docs.deepseek.com 확인)
+    1단계엔 못 씀, 2단계 저렴한 폴백 자리만.
+  - adapters/market_index_client.py: Yahoo Finance 비공식 엔드포인트로
+    VXN 등 지수 조회, 실패해도 절대 예외 안 던지고 status=UNAVAILABLE로.
+  - services/analysis_service.py: VXN 그리드 매수 규칙(사용자의 실제
+    투자법 -- 0~15 IQQ10주/15~24 QQQM1주/25~30 QQQ1주/30~40 상황체크,
+    24~25 틈과 40 이상은 정의 안 된 채로 UNDEFINED 유지, 임의로 안 채움)
+    을 Python이 확정하고 LLM은 재계산 없이 그대로 인용하도록 프롬프트에
+    명시. 2단계 파이프라인(1단계 Gemini 우선 웹서치로 SOXX/MU/금리/환율
+    등 객관조회 -> 2단계가 스냅샷+1단계 결과로 해석/시나리오 작성),
+    5분 캐시로 중복 LLM 호출 방지.
+  - schema.py: analysis_results 테이블(id/snapshot_json/result_text/
+    provider/model) 신규.
+  - frontend: briefing.html/js/css 신규(report.html과 같은 독립 페이지
+    패턴), 헤더에 🌐 아이콘으로 진입(처음엔 목록 화면에 큰 버튼으로
+    만들었다가, 사용자가 실기기 스크린샷 보고 "그렇게 크게 하지 말고
+    아이콘 형태로" 정정 요청해서 헤더 아이콘으로 이동).
+  - 실키 라이브 검증 중 발견해서 고친 실제 버그 3건: (1) Gemini 기본
+    모델명이 신규 사용자에게 지원 종료된 구버전(gemini-1.5-flash) --
+    ListModels로 확인해서 gemini-flash-latest로 교체 (2) [보안] Gemini
+    키가 URL 쿼리스트링(?key=)에 있어서 요청 실패시 uvicorn.log에 키가
+    평문으로 남는 걸 실제로 확인(tail로 직접 봄) -- x-goog-api-key
+    헤더 방식으로 변경, 이미 찍힌 로그는 redact (3) Claude 웹서치 호출이
+    max_tokens=2000에 걸려 검색만 하고 텍스트 없이 잘림(stop_reason=
+    max_tokens로 재현) -- 웹서치 호출만 8000으로 증량.
+  - 키 4개(ANTHROPIC/OPENAI/GEMINI/DEEPSEEK) 전부 로컬 .env에 사용자가
+    직접 입력(메모장 템플릿 방식, 값은 한 번도 직접 안 읽음)하고 값
+    확인 없이 존재/길이만 확인하는 스크립트로 병합.
+  - pytest 143 -> 176개, 전부 통과.
+  - 커밋(27aebb2) 후 원격 push + VPS 배포까지 완료: git pull(atrsite
+    소유 repo라 strpro 계정에서 dubious ownership 에러 -> safe.directory
+    1회 등록 후 sudo -u atrsite git pull), LLM 키 4개는 로컬 .env에서
+    값을 안 읽고 파이프로 원격 append, atrsite-web 서비스만 재시작
+    (analysis_results는 CREATE TABLE IF NOT EXISTS라 자동 마이그레이션).
+    실서버(http://107.173.91.254)에서 헤더 🌐 아이콘 실제 노출 확인.
+  - 상세 작업 로그: WORK_LOG_llm_briefing.md (귀가 후 3개 질문에 대한
+    답변과 그 반영 과정까지 포함, 아직 별도 커밋 안 됨).
+
+====================================================================
+[종목탐구(company-explorer) 기능 -- 작업 시작] (2026-08-03)
+====================================================================
+사용자가 4시간 외출하며 대형 스펙(20절)을 전달하고 "질문하지 말고 너의
+추천사항으로 진행, 곤란한 것만 귀가 후 물어보라"고 위임함. 음성 기능은
+스펙과 별개로 이번엔 포기(사용자 명시). 아래는 코드 수정 전 필수 확인
+사항(스펙 1절) 보고 -- 승인 대기 없이 바로 이어서 구현 진행.
+
+1. 현재 메뉴/라우트 구조
+--------------------------------------------------------------------
+- index.html(SPA)은 진짜 해시 라우팅(#list, #detail/<id>)을 씀 --
+  main.js가 history.pushState + popstate로 view-list/view-detail
+  섹션을 토글. 이 라우터는 "같은 페이지 안"에서만 동작.
+- report.html/briefing.html은 이 해시 라우터에 안 엮여 있음 -- 완전히
+  독립된 별도 HTML 페이지(자체 <script type=module>, api-client.js만
+  재사용해서 같은 오리진 인증 공유). 헤더의 아이콘 링크
+  (<a target=_blank>)로 진입, 새 탭에서 열림.
+- 헤더(.app-header)는 grid(1fr auto 1fr) 3구역: .header-nav(왼쪽,
+  뒤로/앞으로/새로고침 3개) / h1(가운데, "ATRsite-pro" 고정) /
+  .header-actions(오른쪽, 아이콘 링크들).
+- 새로고침(btn-nav-refresh)은 현재 location.reload()(전체 새로고침) --
+  스펙 3.4가 요구하는 "화면별 맞는 재조회"는 아직 아님. main.js에
+  refreshCurrentView()라는 헬퍼가 이미 있는데(현재 뷰가 detail이면
+  loadAndRenderDetail, 아니면 loadAndRenderList) 새로고침 버튼에 연결이
+  안 돼 있었음 -- 이번에 연결함(아래 3번 참고).
+- 판단: report.html/briefing.html처럼 종목탐구도 독립 페이지
+  (company-explorer.html)로 만드는 게 이 프로젝트의 기존 관례와 일치.
+  index.html의 내부 해시 라우터에 억지로 엮으면(다른 2개 기능과
+  다르게) 오히려 일관성이 깨짐 -- 스펙 3.3의 "#company-explorer"는
+  예시일 뿐이고 "현재 프로젝트의 해시 라우팅 형식을 따르라"는 단서가
+  있어 이 판단을 따름.
+
+2. 현재 매크로 LLM 모듈 구조
+--------------------------------------------------------------------
+- adapters/llm_client.py: is_dummy_mode()/ask(system, user, *,
+  use_web_search, chain)/LLMResponse/LLMError. chain은 provider 이름이
+  아니라 "stage1_search"/"stage2_judgment" 같은 역할 이름 -- 여러 기능이
+  같은 provider로 시작하는 서로 다른 체인을 가질 수 있게 일반화돼 있음.
+  종목탐구도 이 두 체인을 그대로 재사용 가능(1단계=최신 공시/뉴스
+  객관조회, 2단계=Python이 계산한 재무지표로 서술/판단).
+- adapters/market_index_client.py: 외부 지수 조회 공통 패턴(실패해도
+  절대 예외 안 던지고 status=UNAVAILABLE) -- 새 외부 데이터 어댑터
+  (SEC EDGAR/OpenDART)도 이 원칙을 그대로 따름.
+- services/analysis_service.py: (a) Python이 먼저 확정 수치를 계산 ->
+  (b) 그 결과를 "재계산하지 말고 그대로 설명만 하라"고 프롬프트에
+  명시 -> (c) 5분 캐시로 중복 LLM 호출 방지. 종목탐구도 동일 골격
+  재사용(재무지표는 Python 확정, LLM은 서술만).
+- schema.py: CREATE TABLE IF NOT EXISTS만 쓰는 무중단 마이그레이션
+  패턴(기존 데이터 보존, db.py의 _add_column_if_missing()도 있음).
+- api/analysis.py + repositories/analysis.py: 스펙 12절이 요구하는
+  요청ID/폴링 패턴은 아직 없음(macro는 동기 처리, 개인용 저빈도라
+  충분했음) -- 종목탐구는 SEC/OpenDART 실제 API 호출이 여러 번 겹쳐서
+  더 오래 걸릴 수 있으므로 이번엔 요청ID+상태 폴링을 실제로 도입함
+  (스펙 12절 그대로).
+
+3. 재사용 가능한 MMEAN 패턴 (C:\mmean\llm\llm_chain.py 확인함, 복사/
+   import 안 하고 개념만 재작성)
+--------------------------------------------------------------------
+- JSON 추출/정규화(코드펜스 제거, 중괄호 균형 파싱, Python 리터럴->JSON):
+  이번 기능엔 불필요 -- 스펙 9.3의 LLM 출력은 macro 브리핑과 동일하게
+  20절 구조의 "서술문"이고, IMPROVING/STABLE/DETERIORATING 같은 상태값은
+  스펙 6.3에 따라 Python 계산 엔진이 만들어 DB에 저장하는 것이지 LLM이
+  JSON으로 반환하는 게 아님. 그래서 JSON 스키마 검증/추출 로직은 이번엔
+  가져오지 않음(불필요한 복잡도 추가 방지).
+- 토큰/비용/지연시간 로깅(attempts 리스트, latency_ms, provider,
+  model, fallback_depth): 스펙 14절의 llm_usage 요구사항과 정확히
+  대응 -- 이 개념은 채택. 다만 mmean처럼 일일 호출/토큰 한도(daily
+  limit)는 macro 기능에도 없었고 개인 저빈도 사용이라 이번에도 생략
+  (과설계 방지, 프로젝트 기존 판단 기조와 일치).
+- 공급자별 재시도+백오프(2s/4s/8s, 타임아웃/네트워크 오류에만):
+  기존 llm_client.py는 재시도 없이 즉시 다음 공급자로 폴백하는 더
+  단순한 방식이고 macro 기능에서 이미 실전 검증됨 -- 이번에도 동일
+  방식 유지(공용 llm_client.py를 고치면 macro 기능 동작까지 바뀌므로
+  안전한 것만 그대로 씀). 재시도 로직 자체를 새로 추가하진 않음.
+- 결론: llm_client.py는 그대로 재사용(수정 없음), 새 LLM 클라이언트는
+  안 만듦(스펙 요구사항 그대로 준수).
+
+4. 추가/수정할 파일 목록 (MVP 범위 -- 아래 "이번 4시간 범위" 참고)
+--------------------------------------------------------------------
+신규 백엔드:
+  backend/atrsite/adapters/sec_edgar_client.py   (SEC EDGAR, 키 불필요)
+  backend/atrsite/adapters/opendart_client.py    (OpenDART, 키 필요 --
+                                                    더미 모드로 골격만)
+  backend/atrsite/services/company_metrics_engine.py (정량 계산 + 경고규칙)
+  backend/atrsite/services/company_analysis_service.py (스냅샷 조합 +
+                                                    2단계 LLM 파이프라인)
+  backend/atrsite/repositories/companies.py
+  backend/atrsite/repositories/company_analysis.py
+  backend/atrsite/api/company.py
+신규 프런트엔드:
+  frontend/company-explorer.html / css/company-explorer.css /
+    js/company-explorer.js
+수정:
+  frontend/index.html(헤더에 🔍 종목탐구 아이콘, 순서를 보고서/종목탐구/
+    오늘 브리핑으로 재배치), frontend/js/main.js(새로고침 버튼을
+    refreshCurrentView()에 연결), frontend/js/api-client.js(신규
+    엔드포인트), backend/atrsite/schema.py(신규 테이블),
+    backend/atrsite/main.py(신규 라우터 등록), service-worker.js
+    캐시 버전.
+
+5. DB 마이그레이션 계획
+--------------------------------------------------------------------
+- 별도 DB(data/analysis.db)로 분리하는 스펙 13절 제안은 채택 안 함 --
+  기존 analysis_results 테이블도 이미 같은 atrsite.db에 있고, SQLite
+  파일 하나로 계속 가는 게(크로스 DB 조인 불필요, 백업 스크립트가 이미
+  단일 파일 기준으로 동작) 이 프로젝트 규모에 더 단순하고 안전하다고
+  판단(과설계 방지 원칙).
+- 전부 CREATE TABLE IF NOT EXISTS(기존 무중단 패턴), 이름 충돌 방지로
+  전부 company_ 접두사:
+  companies, company_identifiers, company_filings,
+  company_financial_periods, company_financial_metrics,
+  company_news, company_snapshots, company_analysis_requests,
+  company_analysis_results.
+- 스펙의 industry_metrics/llm_usage/audio_files 3개는 이번 MVP에서
+  별도 테이블로 안 만듦: industry_metrics는 company_financial_metrics에
+  metric_key 네임스페이스로 흡수(테이블 수 최소화), llm_usage는 나중에
+  실사용 패턴을 보고 필요하면 추가(지금은 company_analysis_results에
+  provider/model/latency_ms만 우선 기록), audio_files는 음성 기능 자체를
+  포기했으므로 불필요.
+- 기존 사용자 데이터(거래/보유종목) 테이블은 전혀 건드리지 않음.
+
+6. 단계별 테스트 계획
+--------------------------------------------------------------------
+- sec_edgar_client: 실제 공개 API로 라이브 테스트(키 불필요) + 네트워크
+  실패/필드 누락 시 UNAVAILABLE 폴백 테스트
+- opendart_client: 키 없는 더미 모드 테스트만(실제 키가 없어서 라이브
+  검증은 귀가 후 키를 받아야 가능 -- 아래 "귀가 후 확인" 참고)
+- company_metrics_engine: 성장률/마진/FCF/현금전환율/순차입금/
+  이자보상배율 계산 + 경고 규칙(매출채권>매출 증가율 등) 단위 테스트,
+  기존 atr_engine.py 테스트 스타일(고정 픽스처로 정확한 기대값 검증)
+- company_analysis_service: 캐시/폴링 상태 전이/더미모드 -- 기존
+  analysis_service 테스트 패턴 그대로
+- api/company.py: FastAPI TestClient로 엔드포인트별 인증/상태코드
+- 회귀 방지: 기존 176개 테스트가 계속 통과하는지 매 체크포인트마다 확인
+
+이번 4시간 범위(현실적 판단, 스펙 20절 전체를 다 채우진 못함):
+- 미국 기업(SEC EDGAR, 키 불필요)을 실데이터로 완전히 동작하게 만드는
+  것을 최우선으로 함(검증 가능하니까). 한국 기업(OpenDART)은 API 키가
+  있어야 회사코드 매핑 자체를 못 받아오므로, 어댑터 골격은 만들되
+  더미/미가용 모드로 두고 "귀가 후 확인" 항목으로 넘김.
+- 업종 템플릿은 스펙이 1순위로 지정한 반도체만 구현, 나머지는
+  INSUFFICIENT_DATA로 명확히 표시.
+- 스펙 12절 폴링 상태(PENDING~COMPLETED)는 만들되, GENERATING_AUDIO는
+  음성 포기로 제외.
+- 커밋은 로컬까지만(스펙 19절 명시), push/배포 안 함.
+
+====================================================================
+[종목탐구 -- 1차 구현 완료(미국 기업), 실데이터 라이브 검증 완료]
+====================================================================
+2026-08-03, 위 위임 지시 이후 이어서 작업. 4시간 범위에서 "미국 기업
+우선"으로 좁힌 MVP가 완전히 동작하는 상태로 끝남 -- 실제 SEC 데이터로
+Micron/Microsoft/QQQ 3개 종목을 브라우저에서 직접 검색->확인->분석까지
+전부 실행해서 확인함(스펙 7단계 Shadow 검증의 축소판).
+
+구현 내역
+--------------------------------------------------------------------
+- 헤더: [보고서][종목탐구🔍][오늘 브리핑] 순서, 새로고침 버튼을
+  refreshCurrentView()에 연결(전체 새로고침 -> 화면별 재조회)
+- DB: companies/company_identifiers/company_filings/
+  company_financial_periods/company_financial_metrics/
+  company_analysis_requests/company_analysis_results 7개 테이블(스펙
+  9개에서 industry_metrics는 financial_metrics에 흡수, company_news/
+  company_snapshots는 매크로 브리핑처럼 snapshot_json에 흡수해서 축소).
+  같은 atrsite.db 안에(별도 DB 분리 안 함, 과설계 방지)
+- adapters/sec_edgar_client.py: company_tickers.json 검색 + companyfacts
+  XBRL 정규화(최근 8개 분기/4개 연간). 키 불필요, User-Agent만 필요
+  (SEC_USER_AGENT 환경변수, 기본값은 플레이스홀더 -- 실사용량 늘면 실제
+  연락처로 채우길 권장)
+- adapters/opendart_client.py: 골격만(키 없어서 실제 파싱 미검증,
+  실행하면 명확한 에러 -- "추측으로 구현 안 함" 원칙)
+- services/company_metrics_engine.py: 마진/FCF/순차입금/이자보상배율/
+  현금전환율 계산, IMPROVING~INSUFFICIENT_DATA 판정, 경고 규칙 6종
+  (스펙 9종 중 단기차입금/CAPEX가동률/일회성이익 3종은 데이터 자체가
+  없어서 미구현 -- 임의 추정 안 함), 반도체 재고일수(inventory_days)
+  전용 계산
+- services/company_analysis_service.py: 2단계 LLM(1단계=stage1_search,
+  2단계=stage2_judgment -- 매크로 브리핑과 동일한 체인 재사용, 새 LLM
+  클라이언트 안 만듦), 20항목 구조 프롬프트, ETF/한국기업 명확히 차단
+- api/company.py: 스펙 12절 그대로 -- POST /company-analysis/run이
+  BackgroundTasks로 즉시 202+요청ID 반환, GET .../{id}로 폴링. 백그라운드
+  작업은 요청-스코프 커넥션을 공유하지 않고 별도 connect()(worker.py와
+  동일 원칙)
+- frontend/company-explorer.html+js+css: 검색->기업확인->진행상태 폴링
+  ->한눈에보기(뱃지)+경고+20항목 서술 결과. report.html/briefing.html과
+  동일한 독립 페이지 패턴
+- 테스트 87개 신규(companies_repo 9, sec_edgar_client 7, opendart_client
+  3, company_metrics_engine 13, company_analysis_service 9, company API
+  6 등) + 기존 143개 유지, 전체 226개 통과 (2026-08-03 기준)
+
+라이브 검증 중 발견해서 고친 실제 버그 3건
+--------------------------------------------------------------------
+1. SEC 원본 데이터의 fy/fp 태그가 비교(전년동기) 컬럼에 실제 기간과
+   다른 값이 붙는 걸 실제로 확인(서로 다른 두 분기가 둘 다 "2026 Q1"로
+   태깅됨) -- DB UNIQUE 제약을 fiscal_year/fiscal_period가 아니라
+   period_end(항상 신뢰 가능한 실제 날짜) 기준으로 바꾸고, 라벨 자체도
+   해당 회사의 자체 회계연도 표기가 아니라 period_end에서 직접 계산한
+   달력 분기로 바꿈(부정확한 걸 정확해 보이게 두는 것보다 낫다고 판단)
+2. company-analysis 2단계(20항목) 응답이 MAX_TOKENS=2000(매크로
+   브리핑 10항목 기준)에 걸려 3줄 만에 잘리는 걸 실제로 확인 --
+   llm_client.ask()에 max_tokens 오버라이드 파라미터를 추가해서 종목탐구
+   2단계는 8000으로 지정(공용 클라이언트 자체를 건드리지 않고 호출자가
+   필요한 만큼만 늘릴 수 있게 일반화)
+3. (버그는 아니지만) "분석 기준일" 항목이 뉴스 날짜와 혼동되는 경향이
+   보여서 프롬프트에 "재무 스냅샷의 최근 분기 period_end를 쓰라"고
+   명시적으로 추가
+
+실제 확인된 동작(브라우저 라이브 테스트)
+--------------------------------------------------------------------
+- Micron(반도체 템플릿 자동 감지) 분석: 20항목 전부 생성, IMPROVING/
+  INSUFFICIENT_DATA 판정을 Python 결과 그대로 인용, 목표주가 없으면
+  "목표주가 자료 없음"으로 정직하게 표시
+- Microsoft 분석: 경고 규칙 2건 실제로 트리거됨(재고 증가율이 매출
+  증가율보다 13.1%p 높음 / 발행주식수 증가율이 순이익 증가율보다 높음)
+  -- 실제 SEC 데이터로 경고 로직이 의도대로 작동하는 것 확인
+- QQQ(ETF) 검색 -> 확인 화면에서 "ETF는 분석 대상 아님" 안내 + 분석
+  버튼 비활성화 정상 동작
+- "다른 종목 검색" 리셋 후 "최근 분석"에 MU+MSFT 둘 다 정상 표시
+
+이번 범위에서 의도적으로 안 한 것 (귀가 후 확인/결정 필요)
+--------------------------------------------------------------------
+1. **한국 기업(OpenDART) 실제 분석** -- API 키가 없어서 검색부터 막힘.
+   opendart.fss.or.kr에서 회원가입 후 키 발급받아 주면, 기존 LLM 키
+   넣던 방식(메모장 템플릿 -> 값 안 읽고 병합)으로 넣고 실제 구현+라이브
+   검증 진행 가능. 지금은 명확한 안내 메시지("한국 기업 분석은 아직
+   지원하지 않습니다")만 나옴
+2. **업종 템플릿** -- 반도체만 구현(스펙 1순위). 은행/SaaS/정유 등은
+   INSUFFICIENT_DATA. 필요하면 추가 확장
+3. **음성 기능** -- 사용자가 이번엔 명시적으로 포기 지시("음성기능은
+   포기한다"), 완전히 제외함
+4. **매크로 연동** -- 반도체 업종만 아주 가볍게(최근 매크로 브리핑 존재
+   여부만 참고) 연결. 스펙 8절이 원하는 "은행->기준금리, 정유->WTI" 같은
+   업종별 세부 매핑은 각 지수를 market_index_client.py에 추가하고 실제
+   라이브 검증하는 작업이 더 필요해서(VXN 하나 검증하는 데도 상당한
+   시간이 들었음) 이번엔 반도체(VXN)만 하고 확장 안 함
+5. **캐시 정책** -- 스펙 14절의 "확정 재무제표는 새 공시 전까지 캐시"는
+   DB에 저장은 되지만 재사용(캐시 히트 시 SEC 재호출 스킵) 로직은 아직
+   없음 -- "새로 분석" 누르면 항상 SEC를 다시 호출함. 트래픽이 적어서
+   당장은 문제 없지만, 필요하면 나중에 추가
+6. **llm_usage 테이블** -- 스펙이 요청한 토큰/비용 세부 로깅 테이블은
+   안 만듦(company_analysis_results에 provider/model만 기록). 실사용
+   패턴 보고 필요하면 추가
+7. 재무제표 정정(restatement) 시 과거 분석 결과를 자동으로 재계산하는
+   로직 없음(매번 "새로 분석"을 눌러야 최신 정정치 반영)
+
+git: 로컬 커밋까지만 수행(스펙 19절 "원격 push와 배포는 별도 요청시만"
+그대로 준수). 이번 세션에서 만든 데이터(MU/MSFT 실제 분석 결과)는 로컬
+DB에 실제로 남아있음 -- 귀가 후 바로 확인 가능.

@@ -107,4 +107,10 @@ export const api = {
 
   runBriefing: (force = false) => request('POST', `/api/v1/analysis/run${force ? '?force=true' : ''}`),
   getLatestBriefing: () => request('GET', '/api/v1/analysis/latest'),
+
+  searchCompany: (q) => request('GET', `/api/v1/company/search?q=${encodeURIComponent(q)}`),
+  resolveCompanyUS: (body) => request('POST', '/api/v1/company/resolve', body),
+  runCompanyAnalysis: (companyId) => request('POST', '/api/v1/company-analysis/run', { company_id: companyId }),
+  getCompanyAnalysis: (requestId) => request('GET', `/api/v1/company-analysis/${requestId}`),
+  listRecentCompanyAnalyses: () => request('GET', '/api/v1/company-analysis/recent'),
 };

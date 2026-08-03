@@ -249,3 +249,41 @@ def test_ask_stage2_tries_gemini_first_and_claude_last(restore_llm_keys, monkeyp
     assert "deepseek" in called_urls[2]
     # anthropic(claude)는 한 번도 호출 안 됨 -- 진짜 최후 폴백인지 확인
     assert not any("anthropic" in u for u in called_urls)
+
+
+def test_ask_max_tokens_override_passed_to_provider(fake_claude_key, monkeypatch):
+    captured = {}
+
+    def fake_post(self, url, headers=None, json=None, timeout=None):
+        captured["max_tokens"] = json["max_tokens"]
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"content": [{"type": "text", "text": "응답"}]}
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    llm_client.ask("system", "user", max_tokens=8000)
+    assert captured["max_tokens"] == 8000
+
+
+def test_ask_without_override_uses_default_max_tokens(fake_claude_key, monkeypatch):
+    captured = {}
+
+    def fake_post(self, url, headers=None, json=None, timeout=None):
+        captured["max_tokens"] = json["max_tokens"]
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"content": [{"type": "text", "text": "응답"}]}
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    llm_client.ask("system", "user")
+    assert captured["max_tokens"] == llm_client.MAX_TOKENS

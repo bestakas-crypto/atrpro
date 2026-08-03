@@ -146,7 +146,10 @@ const ctx = {
 function bindEvents() {
   el.btnNavBack.addEventListener('click', () => history.back());
   el.btnNavForward.addEventListener('click', () => history.forward());
-  el.btnNavRefresh.addEventListener('click', () => location.reload());
+  // 종목목록/종목상세는 현재 뷰에 맞게 다시 조회(스펙: 전체 새로고침이 아니라
+  // 화면별 재조회). refreshCurrentView()가 이미 state.currentInstrumentId로
+  // 목록/상세를 구분해서 다시 그려준다(2026-08-03, 이전엔 미연결 상태였음).
+  el.btnNavRefresh.addEventListener('click', () => refreshCurrentView());
 
   el.btnAddStock.addEventListener('click', () => {
     el.addStockName.value = '';

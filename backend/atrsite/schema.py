@@ -200,6 +200,109 @@ DDL_STATEMENTS: list[str] = [
         model         TEXT NOT NULL
     )
     """,
+    # ---- 종목탐구(company-explorer) -- 2026-08-03 추가 --------------------
+    # 기존 analysis_results(매크로 브리핑)와 이름이 겹치지 않게 전부 company_
+    # 접두사. 별도 DB로 분리하지 않고 같은 atrsite.db에 둠(크로스 DB 조인
+    # 불필요, 백업 스크립트가 이미 단일 파일 기준 -- 과설계 방지).
+    """
+    CREATE TABLE IF NOT EXISTS companies (
+        id                TEXT PRIMARY KEY,
+        country           TEXT NOT NULL CHECK(country IN ('KR', 'US')),
+        security_type     TEXT NOT NULL DEFAULT 'STOCK' CHECK(security_type IN ('STOCK', 'ETF')),
+        name              TEXT NOT NULL,
+        name_en           TEXT,
+        currency          TEXT NOT NULL,
+        exchange          TEXT,
+        primary_ticker    TEXT NOT NULL,
+        sec_cik           TEXT,
+        dart_corp_code    TEXT,
+        industry_template TEXT,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_identifiers (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        id_type    TEXT NOT NULL CHECK(id_type IN ('TICKER', 'KRX_CODE', 'CIK', 'NAME_ALIAS')),
+        id_value   TEXT NOT NULL,
+        UNIQUE(id_type, id_value)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_filings (
+        id                      TEXT PRIMARY KEY,
+        company_id              TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        source                  TEXT NOT NULL CHECK(source IN ('SEC', 'DART')),
+        filing_type             TEXT NOT NULL,
+        filed_at                TEXT,
+        period_end              TEXT,
+        accession_or_receipt_no TEXT,
+        url                     TEXT,
+        fetched_at              TEXT NOT NULL,
+        UNIQUE(source, accession_or_receipt_no)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_financial_periods (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        fiscal_year   INTEGER NOT NULL,
+        fiscal_period TEXT NOT NULL CHECK(fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4', 'FY')),
+        period_type   TEXT NOT NULL CHECK(period_type IN ('QUARTER', 'ANNUAL')),
+        period_end    TEXT NOT NULL,
+        filed_at      TEXT,
+        source        TEXT NOT NULL,
+        fetched_at    TEXT NOT NULL,
+        -- fiscal_year/fiscal_period가 아니라 period_end로 유일성을 잡는다 --
+        -- SEC 원본 데이터의 fy/fp 태그는 비교 컬럼(전년 동기 등)에 실제
+        -- 기간과 다른 값이 붙는 경우가 실제로 있어(2026-08-03 라이브
+        -- 검증 중 발견: 서로 다른 두 분기가 둘 다 "2026 Q1"로 태깅됨)
+        -- 유일성 기준으로 못 씀. period_end(실제 날짜)는 항상 신뢰 가능.
+        UNIQUE(company_id, period_end, period_type)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_financial_metrics (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_id   INTEGER NOT NULL REFERENCES company_financial_periods(id) ON DELETE CASCADE,
+        metric_key  TEXT NOT NULL,
+        value       REAL,
+        unit        TEXT,
+        verdict     TEXT CHECK(verdict IS NULL OR verdict IN
+                      ('IMPROVING', 'STABLE', 'DETERIORATING', 'CAUTION', 'INSUFFICIENT_DATA')),
+        basis_note  TEXT,
+        UNIQUE(period_id, metric_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_analysis_requests (
+        id             TEXT PRIMARY KEY,
+        company_id     TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        status         TEXT NOT NULL DEFAULT 'PENDING',
+        error_message  TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS company_analysis_results (
+        id            TEXT PRIMARY KEY,
+        request_id    TEXT NOT NULL REFERENCES company_analysis_requests(id) ON DELETE CASCADE,
+        company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        created_at    TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        result_text   TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        model         TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_company_identifiers_company ON company_identifiers(company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_company_filings_company ON company_filings(company_id, filed_at)",
+    "CREATE INDEX IF NOT EXISTS idx_company_periods_company ON company_financial_periods(company_id, period_end)",
+    "CREATE INDEX IF NOT EXISTS idx_company_metrics_period ON company_financial_metrics(period_id)",
+    "CREATE INDEX IF NOT EXISTS idx_company_analysis_results_company ON company_analysis_results(company_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument_id, executed_at, sequence_no)",
     "CREATE INDEX IF NOT EXISTS idx_daily_bars_instrument ON daily_bars(instrument_id, trade_date)",
     "CREATE INDEX IF NOT EXISTS idx_atr_values_instrument ON atr_values(instrument_id, trade_date)",

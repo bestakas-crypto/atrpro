@@ -383,3 +383,106 @@ def test_analysis_run_reuses_cache_without_force(client, force_llm_dummy_and_stu
 
     third = client.post("/api/v1/analysis/run?force=true").json()
     assert third["id"] != first["id"]
+
+
+# ---------------------------------------------------------------------------
+# 종목탐구(company-explorer) API -- 2026-08-03 추가. SEC 호출은 monkeypatch,
+# LLM은 더미모드(force_llm_dummy_and_stub_vxn 재사용 -- VXN은 이 API와
+# 무관하지만 LLM 키를 비우는 부분만 필요해서 그대로 씀).
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def stub_sec_search(monkeypatch):
+    from atrsite.adapters import sec_edgar_client
+
+    monkeypatch.setattr(
+        sec_edgar_client, "search_companies",
+        lambda q, **kw: [sec_edgar_client.CompanyMatch(cik=723125, ticker="MU", title="MICRON TECHNOLOGY INC")],
+    )
+
+
+@pytest.fixture()
+def stub_sec_facts(monkeypatch):
+    from atrsite.adapters import sec_edgar_client
+
+    def fake_normalize(facts, *, period_type, limit=8):
+        if period_type != "QUARTER":
+            return []
+        return [
+            sec_edgar_client.NormalizedPeriod(
+                fiscal_year=2025, fiscal_period="Q4", period_type="QUARTER", period_end="2025-11-27",
+                filed_at="2025-12-18", accession_no="0000723125-25-000046",
+                metrics={"revenue": 13643000000.0, "gross_profit": 7646000000.0, "net_income": 5240000000.0},
+            ),
+            sec_edgar_client.NormalizedPeriod(
+                fiscal_year=2026, fiscal_period="Q1", period_type="QUARTER", period_end="2026-02-26",
+                filed_at="2026-03-19", accession_no="0000723125-26-000006",
+                metrics={"revenue": 23860000000.0, "gross_profit": 17755000000.0, "net_income": 13785000000.0},
+            ),
+        ]
+
+    monkeypatch.setattr(sec_edgar_client, "fetch_company_facts", lambda cik, **kw: {"stub": True})
+    monkeypatch.setattr(sec_edgar_client, "normalize_periods", fake_normalize)
+
+
+def test_company_search_returns_us_matches(client, stub_sec_search):
+    resp = client.get("/api/v1/company/search?q=MU")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"][0]["ticker"] == "MU"
+    assert any("OpenDART" in n for n in body["notices"])
+
+
+def test_company_search_empty_query_returns_empty(client):
+    resp = client.get("/api/v1/company/search?q=")
+    assert resp.status_code == 200
+    assert resp.json() == {"results": [], "notices": []}
+
+
+def test_company_resolve_creates_company(client):
+    resp = client.post("/api/v1/company/resolve", json={"cik": 723125, "ticker": "MU", "name": "MICRON TECHNOLOGY INC"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["primary_ticker"] == "MU"
+    assert body["industry_template"] == "semiconductor"
+
+
+def test_company_analysis_run_returns_pending_then_completes(client, force_llm_dummy_and_stub_vxn, stub_sec_facts):
+    company = client.post(
+        "/api/v1/company/resolve", json={"cik": 723125, "ticker": "MU", "name": "MICRON TECHNOLOGY INC"},
+    ).json()
+
+    run_resp = client.post("/api/v1/company-analysis/run", json={"company_id": company["id"]})
+    assert run_resp.status_code == 202
+    request = run_resp.json()
+    assert request["status"] == "PENDING"
+
+    # TestClient는 BackgroundTasks를 응답 반환 전에 동기 실행하므로 이 시점에
+    # 이미 끝나 있어야 한다.
+    poll = client.get(f"/api/v1/company-analysis/{request['id']}")
+    assert poll.status_code == 200
+    polled = poll.json()
+    assert polled["status"] == "COMPLETED"
+    assert polled["result"]["provider"] == "dummy"
+
+
+def test_company_analysis_run_404_for_unknown_company(client):
+    resp = client.post("/api/v1/company-analysis/run", json={"company_id": "no-such-id"})
+    assert resp.status_code == 404
+
+
+def test_company_analysis_get_404_for_unknown_request(client):
+    resp = client.get("/api/v1/company-analysis/no-such-request")
+    assert resp.status_code == 404
+
+
+def test_company_analysis_recent_lists_completed_only(client, force_llm_dummy_and_stub_vxn, stub_sec_facts):
+    company = client.post(
+        "/api/v1/company/resolve", json={"cik": 723125, "ticker": "MU", "name": "MICRON TECHNOLOGY INC"},
+    ).json()
+    assert client.get("/api/v1/company-analysis/recent").json() == []
+
+    client.post("/api/v1/company-analysis/run", json={"company_id": company["id"]})
+    recent = client.get("/api/v1/company-analysis/recent").json()
+    assert len(recent) == 1
+    assert recent[0]["primary_ticker"] == "MU"

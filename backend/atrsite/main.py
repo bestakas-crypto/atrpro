@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api.analysis import router as analysis_router
+from .api.company import router as company_router
 from .api.dashboard import router as dashboard_router
 from .api.deposits import router as deposits_router
 from .api.health import router as health_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(deposits_router)
     app.include_router(legacy_router)
     app.include_router(analysis_router)
+    app.include_router(company_router)
 
     frontend_dir = settings.frontend_dir
     if frontend_dir.is_dir():

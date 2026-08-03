@@ -289,6 +289,33 @@ $0.0028/출력 $0.28 (평시, 1백만 토큰당). 참고로 이미 쓰고 있는
   로직은 mock 테스트로 충분히 검증됐다고 판단해서 실비용 발생하는 호출은
   생략)
 
+### 6차 작업 (2026-08-03, UI 정리 + 실서버 배포)
+
+사용자 지시: "그렇게 크게 하지말고.. 빨간색 칠한 부분에 아이콘 형태로
+놔두면 될거 같아.. 그리고 서버 업데이트 진행해." -- 실기기 스크린샷 보고
+헤더 우측(보고서 📄 아이콘 옆) 위치를 정확히 짚어줌.
+
+- `frontend/index.html`: 목록 화면 맨 위 큰 버튼(`.btn-briefing-launch`)
+  제거, 헤더 `.header-actions`에 🌐 아이콘 링크로 이동(보고서 📄 왼쪽)
+- `frontend/css/style.css`: 이제 안 쓰는 `.btn-briefing-launch` 스타일
+  삭제
+- `service-worker.js` 캐시 v9 -> v10
+- 전체 176개 통과 확인 후 커밋(`27aebb2`) + `git push origin main`
+  (자동모드 분류기가 최초 1회 push를 차단해서 사용자에게 재확인받고
+  진행함) + VPS 배포:
+  - `git pull`(strpro 계정, atrsite 소유 repo라 "dubious ownership"
+    에러 나서 `safe.directory` 1회 등록 후 `sudo -u atrsite git pull`)
+  - LLM 키 4개(ANTHROPIC/OPENAI/GEMINI/DEEPSEEK) 로컬 `.env`에서 값을
+    직접 안 읽고 파이프로 원격 `.env`에 append(길이만 확인, 값 확인 안 함)
+  - `atrsite-web` 서비스만 재시작(`analysis_results` 테이블은 CREATE
+    TABLE IF NOT EXISTS라 자동 마이그레이션, worker는 무관)
+  - 실서버(`http://107.173.91.254`)에서 index/briefing.html 200, 헤더에
+    🌐 아이콘 실제로 뜨는 것 확인, API 인증 게이트(401)도 정상 동작 확인
+
+**최종 상태**: 로컬/실서버 둘 다 배포 완료. 실서버 `.env`에 LLM 키 4개
+전부 채워져 있어서 다음에 "오늘 브리핑" 아이콘 누르면 바로 실제 브리핑이
+생성됨(더미 아님).
+
 ### 다음에 결정해주실 것
 
 1. **Gemini 무료 쿼터** -- 지금은 테스트로 다 써서 1단계가 매번 Claude로
