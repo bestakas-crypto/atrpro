@@ -1147,3 +1147,31 @@ INSUFFICIENT_DATA(총차입금 매핑 안 함, 위 이유 참고), KR 업종 템
 (KODEX/TIGER 등)이라 완벽하지 않음.
 
 git: 이번에도 로컬 커밋까지만.
+
+====================================================================
+[종목탐구+매크로 브리핑 실서버 정식 배포 + 배포 직후 버그 2건 수정] (2026-08-03)
+====================================================================
+- 매크로 브리핑 잘림 수정을 파일 하나만 scp로 올렸던 핫픽스가, 그 파일이
+  의존하는 llm_client.py의 max_tokens 파라미터를 실서버가 아직 몰라서
+  `TypeError: ask() got an unexpected keyword argument 'max_tokens'`로
+  매번 500(Internal Server Error) 발생 -- 사용자 제보("제미나이 배제
+  시키고 해봐라")로 알게 됐는데, 실제 원인은 제미나이가 아니라 이 배포
+  누락이었음(journalctl로 정확한 트레이스백 확인). 지금까지 로컬에만
+  쌓아뒀던 종목탐구 커밋 전체를 정식으로 git push -> 서버 git pull ->
+  재시작으로 배포해서 해결(부분 파일 배포의 위험성을 실제로 겪음 --
+  이후로는 의존성 있는 수정은 꼭 전체를 커밋 단위로 배포).
+- OpenDART 키도 이번에 실서버 .env에 반영(로컬과 동일하게 값 안 읽고
+  파이프로 append).
+- 배포 직후 두 번째 버그: 종목탐구에서 "검색 실패: api.searchCompany is
+  not a function" -- briefing.html/company-explorer.html이 헤더 아이콘
+  으로 index.html 안 거치고 바로 새 탭에서 열리는데, 이 두 페이지엔
+  서비스워커 갱신 확인 로직이 아예 없어서(index.html의 main.js에만
+  있었음) 배포 직후에도 예전 캐시된 api-client.js가 계속 쓰일 수 있었음
+  -- main.js와 같은 등록+update()+controllerchange 리로드 로직을 두
+  페이지에도 추가, 캐시 v11->v12.
+- 사용자 요청으로 브리핑/종목탐구에도 report.html과 같은 인쇄 버튼
+  추가(.no-print + @media print, window.print()).
+- 배포 확인: 실서버에서 api-client.js/service-worker.js 버전 확인,
+  브리핑 max_tokens 함수 시그니처 확인(SSH로 직접 python inspect).
+  기존에 열려있던 탭은 한 번은 수동으로 새로고침해야 새 서비스워커
+  갱신로직 자체를 받아옴(그 이후부터는 자동).
