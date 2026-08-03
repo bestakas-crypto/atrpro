@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .adapters import opendart_client
 from .api.analysis import router as analysis_router
 from .api.company import router as company_router
 from .api.dashboard import router as dashboard_router
@@ -32,6 +34,15 @@ async def _lifespan(app: FastAPI):
         init_db(conn)
     finally:
         conn.close()
+
+    # OpenDART 회사코드 목록(30MB)이 실제로 최대 4분까지 걸리는 게 확인돼서
+    # (2026-08-03, CPU 아니라 OpenDART<->서버 회선이 느린 게 원인) 사용자의
+    # 첫 검색 요청이 그 4분을 기다리다 nginx 504를 맞는 사고가 실제로
+    # 발생함. 서버 시작을 막지 않는 백그라운드 스레드에서 미리 받아둬서
+    # (디스크 캐시까지 남김) 실제 사용자는 최대한 이미 준비된 캐시를 쓰게
+    # 한다. 실패해도 무시(다음 검색 때 다시 시도).
+    asyncio.create_task(asyncio.to_thread(opendart_client.warm_corp_code_cache))
+
     yield
 
 

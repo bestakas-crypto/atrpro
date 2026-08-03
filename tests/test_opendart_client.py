@@ -2,6 +2,7 @@
 # opendart_client.py -- 키 없는 더미 모드 + (2026-08-03 실제 키로 라이브
 # 검증 완료 후) 합성 픽스처로 파싱 로직 검증. corpCode.xml은 진짜 ZIP을
 # 만들어서 monkeypatch로 준다.
+import time
 import zipfile
 from io import BytesIO
 
@@ -21,10 +22,17 @@ def no_opendart_key():
 
 
 @pytest.fixture()
-def fake_opendart_key():
+def fake_opendart_key(tmp_path, monkeypatch):
+    """키를 채우는 것뿐 아니라, 디스크 캐시 경로도 tmp_path로 바꿔치기한다
+    -- 2026-08-03 실제로 겪은 문제: 이 리다이렉트 없이 search_companies()를
+    부르는 테스트가 실제 로컬 data/ 디렉터리에 가짜 회사 목록을 그대로
+    남겨버림(테스트 격리 실패로 실제 캐시 파일이 오염됨). 모든 opendart
+    테스트가 이 픽스처를 거치게 해서 다시는 실제 경로를 안 건드리게 함."""
     original = settings.opendart_api_key
     object.__setattr__(settings, "opendart_api_key", "dummy-opendart-key")
-    yield
+    cache_path = tmp_path / "opendart_corpcode_cache.json"
+    monkeypatch.setattr(opendart_client, "_corp_code_disk_cache_path", lambda: cache_path)
+    yield cache_path
     object.__setattr__(settings, "opendart_api_key", original)
     opendart_client._corp_code_cache["data"] = None
     opendart_client._corp_code_cache["fetched_at"] = 0.0
@@ -244,3 +252,85 @@ def test_normalize_periods_skips_quarters_with_no_real_data(fake_opendart_key, m
     periods = opendart_client.normalize_periods("00126380", period_type="QUARTER", years=[2026])
     assert [p.fiscal_period for p in periods] == ["Q1"]
     assert periods[0].metrics["revenue"] == 100
+
+
+# ---------------------------------------------------------------------------
+# 디스크 캐시 -- 2026-08-03 실제 라이브에서 corpCode.xml 전체 다운로드가
+# 242초(4분)까지 걸리는 걸 확인(CPU 아니라 회선이 느림) -- 서버 재시작마다
+# 이걸 다시 겪지 않도록 파싱 결과를 디스크에 남긴다. 실제 db_path를
+# 건드리지 않게 디스크 캐시 경로를 tmp_path로 바꿔치기해서 테스트한다.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def tmp_corp_code_cache_path(tmp_path, monkeypatch):
+    path = tmp_path / "opendart_corpcode_cache.json"
+    monkeypatch.setattr(opendart_client, "_corp_code_disk_cache_path", lambda: path)
+    opendart_client._corp_code_cache["data"] = None
+    opendart_client._corp_code_cache["fetched_at"] = 0.0
+    yield path
+    opendart_client._corp_code_cache["data"] = None
+    opendart_client._corp_code_cache["fetched_at"] = 0.0
+
+
+def test_search_companies_uses_disk_cache_without_network_call(fake_opendart_key, monkeypatch):
+    opendart_client._save_corp_code_cache_to_disk(
+        [opendart_client.DartCompanyMatch(corp_code="00126380", corp_name="삼성전자", stock_code="005930")],
+        fetched_at=time.time(),
+    )
+
+    def fail_get(self, url, params=None, timeout=None):
+        raise AssertionError("디스크 캐시가 있으면 네트워크를 타면 안 됨")
+
+    monkeypatch.setattr(httpx.Client, "get", fail_get)
+    results = opendart_client.search_companies("005930")
+    assert results[0].corp_name == "삼성전자"
+
+
+def test_search_companies_refetches_when_disk_cache_stale(fake_opendart_key, monkeypatch):
+    stale_time = time.time() - opendart_client._CORP_CODE_CACHE_TTL_SECONDS - 3600
+    opendart_client._save_corp_code_cache_to_disk(
+        [opendart_client.DartCompanyMatch(corp_code="OLD", corp_name="오래된캐시", stock_code="000000")],
+        fetched_at=stale_time,
+    )
+    zip_bytes = _make_corpcode_zip()
+
+    def fake_get(self, url, params=None, timeout=None):
+        class FakeResponse:
+            content = zip_bytes
+            def raise_for_status(self):
+                pass
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    results = opendart_client.search_companies("005930")
+    assert results[0].corp_name == "삼성전자"  # 오래된캐시가 아니라 새로 받은 결과
+
+
+def test_warm_corp_code_cache_populates_disk(fake_opendart_key, monkeypatch):
+    cache_path = fake_opendart_key
+    zip_bytes = _make_corpcode_zip()
+
+    def fake_get(self, url, params=None, timeout=None):
+        class FakeResponse:
+            content = zip_bytes
+            def raise_for_status(self):
+                pass
+        return FakeResponse()
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    assert not cache_path.exists()
+    opendart_client.warm_corp_code_cache()
+    assert cache_path.exists()
+
+
+def test_warm_corp_code_cache_noop_without_key(no_opendart_key, tmp_corp_code_cache_path):
+    opendart_client.warm_corp_code_cache()
+    assert not tmp_corp_code_cache_path.exists()
+
+
+def test_warm_corp_code_cache_swallows_network_errors(fake_opendart_key, monkeypatch):
+    def fail_get(self, url, params=None, timeout=None):
+        raise httpx.ConnectError("network down")
+
+    monkeypatch.setattr(httpx.Client, "get", fail_get)
+    opendart_client.warm_corp_code_cache()  # 예외가 새어나가면 안 됨(서버 시작을 막으면 안 되니까)
