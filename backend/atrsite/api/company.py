@@ -14,7 +14,7 @@ from ..repositories import companies as companies_repo
 from ..repositories import company_analysis as company_analysis_repo
 from ..services import company_analysis_service
 from .deps import get_conn, require_api_key
-from .schemas import CompanyAnalysisRun, CompanyResolveUS
+from .schemas import CompanyAnalysisRun, CompanyResolveKR, CompanyResolveUS
 
 router = APIRouter(prefix="/api/v1", tags=["company"], dependencies=[Depends(require_api_key)])
 
@@ -33,6 +33,15 @@ def resolve_company(body: CompanyResolveUS, conn: sqlite3.Connection = Depends(g
     이 단계를 거치게 함)."""
     company = company_analysis_service.resolve_company_from_us_match(
         conn, cik=body.cik, ticker=body.ticker, title=body.name,
+    )
+    conn.commit()
+    return company
+
+
+@router.post("/company/resolve-kr")
+def resolve_company_kr(body: CompanyResolveKR, conn: sqlite3.Connection = Depends(get_conn)):
+    company = company_analysis_service.resolve_company_from_kr_match(
+        conn, corp_code=body.corp_code, corp_name=body.corp_name, stock_code=body.stock_code,
     )
     conn.commit()
     return company

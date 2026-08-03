@@ -86,5 +86,11 @@ class CompanyResolveUS(BaseModel):
     name: str = Field(min_length=1)
 
 
+class CompanyResolveKR(BaseModel):
+    corp_code: str = Field(min_length=1)
+    corp_name: str = Field(min_length=1)
+    stock_code: str = Field(min_length=1)
+
+
 class CompanyAnalysisRun(BaseModel):
     company_id: str = Field(min_length=1)

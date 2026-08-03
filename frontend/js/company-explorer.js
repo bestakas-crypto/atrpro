@@ -143,14 +143,11 @@ async function loadRecent() {
 
 // ---------- 2. 기업 확인 ----------
 async function selectMatch(match) {
-  if (match.country !== 'US') {
-    el.searchNotices.hidden = false;
-    el.searchNotices.textContent = '한국 기업 분석은 아직 지원하지 않습니다(OpenDART API 키 필요).';
-    return;
-  }
   state.selectedMatch = match;
   try {
-    const company = await api.resolveCompanyUS({ cik: match.cik, ticker: match.ticker, name: match.name });
+    const company = match.country === 'US'
+      ? await api.resolveCompanyUS({ cik: match.cik, ticker: match.ticker, name: match.name })
+      : await api.resolveCompanyKR({ corp_code: match.corp_code, corp_name: match.name, stock_code: match.stock_code });
     state.company = company;
     renderConfirm(company);
     showView('confirm');

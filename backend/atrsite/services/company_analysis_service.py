@@ -45,6 +45,22 @@ def resolve_company_from_us_match(conn: sqlite3.Connection, *, cik: int, ticker:
     return company
 
 
+def resolve_company_from_kr_match(
+    conn: sqlite3.Connection, *, corp_code: str, corp_name: str, stock_code: str,
+) -> dict[str, Any]:
+    """스펙 4.2 확인 단계의 한국 기업 버전. DART는 검색 결과 자체에 ETF
+    여부를 안 줘서(상장 종목 목록에 ETF도 섞여 나옴), 종목명에 흔한 ETF
+    표기가 있으면 임시로 ETF로 분류한다(SEC 쪽 _guess_security_type과
+    같은 수준의 휴리스틱 -- 완벽하지 않음, 잘못 분류돼도 "분석 불가"
+    안내만 나올 뿐 위험하지 않음)."""
+    security_type = "ETF" if any(kw in corp_name.upper() for kw in ("ETF", "KODEX", "TIGER", "KBSTAR", "ARIRANG")) else "STOCK"
+    company = companies_repo.create_company(
+        conn, country="KR", security_type=security_type, name=corp_name, currency="KRW",
+        primary_ticker=stock_code, exchange="KRX", dart_corp_code=corp_code, industry_template=None,
+    )
+    return company
+
+
 def search_companies(query: str) -> dict[str, Any]:
     """미국은 항상 시도(키 불필요), 한국은 OpenDART 키가 있을 때만 -- 스펙
     4.1 "한국/미국 종목 모두 지원"의 검색 단계."""
@@ -195,26 +211,52 @@ def _build_stage2_prompt(company: dict, snapshot: dict, stage1_findings: str) ->
     )
 
 
+def _collect_kr_periods(company: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    if not opendart_client.is_configured():
+        raise CompanyAnalysisError("OpenDART API 키가 설정되지 않았습니다.")
+    corp_code = company["dart_corp_code"]
+    from datetime import date
+    this_year = date.today().year
+    # 분기는 최근 2개년(최대 8개 분기), 연간은 최근 4개년 -- SEC 쪽과 같은 범위.
+    quarterly_years = [this_year - 1, this_year]
+    annual_years = [this_year - i for i in range(ANNUAL_LIMIT)]
+
+    quarterly = opendart_client.normalize_periods(corp_code, period_type="QUARTER", years=quarterly_years)
+    annual = opendart_client.normalize_periods(corp_code, period_type="ANNUAL", years=annual_years)
+    to_dict = lambda p: {  # noqa: E731
+        "period_type": p.period_type, "period_end": p.period_end, "fiscal_year": p.fiscal_year,
+        "fiscal_period": p.fiscal_period, "filed_at": p.filed_at, "accession_no": p.accession_no,
+        "metrics": p.metrics,
+    }
+    quarterly = [to_dict(p) for p in quarterly][-QUARTER_LIMIT:]
+    annual = [to_dict(p) for p in annual]
+    return quarterly, annual
+
+
 def build_snapshot(conn: sqlite3.Connection, company: dict[str, Any]) -> dict[str, Any]:
-    if company["country"] != "US":
-        raise CompanyAnalysisError(
-            "한국 기업 분석은 아직 지원하지 않습니다(OpenDART API 키 필요, 2026-08-03 기준 미설정)."
-        )
     if company["security_type"] == "ETF":
         raise CompanyAnalysisError("ETF 분석 모드는 이번 버전에서 아직 지원하지 않습니다(기업 재무제표 분석 대상 아님).")
 
-    quarterly, annual = _collect_us_periods(company)
+    if company["country"] == "US":
+        quarterly, annual = _collect_us_periods(company)
+        data_source = "SEC"
+    elif company["country"] == "KR":
+        quarterly, annual = _collect_kr_periods(company)
+        data_source = "DART"
+    else:
+        raise CompanyAnalysisError(f"지원하지 않는 국가입니다: {company['country']}")
+
     if not quarterly:
-        raise CompanyAnalysisError("SEC EDGAR에서 이 기업의 분기 재무 데이터를 찾지 못했습니다.")
+        raise CompanyAnalysisError(f"{data_source}에서 이 기업의 분기 재무 데이터를 찾지 못했습니다.")
 
     industry_template = company.get("industry_template")
     annotated_quarterly = engine.annotate_periods(quarterly, industry_template=industry_template)
     annotated_annual = engine.annotate_periods(annual, industry_template=industry_template) if annual else []
     warnings = engine.check_warning_rules(annotated_quarterly)
 
-    _persist_periods(conn, company["id"], annotated_quarterly, source="SEC")
+    _persist_periods(conn, company["id"], annotated_quarterly, source=data_source)
     if annotated_annual:
-        _persist_periods(conn, company["id"], annotated_annual, source="SEC")
+        _persist_periods(conn, company["id"], annotated_annual, source=data_source)
 
     macro_context = None
     if industry_template == "semiconductor":
@@ -241,7 +283,7 @@ def build_snapshot(conn: sqlite3.Connection, company: dict[str, Any]) -> dict[st
         ],
         "warnings": warnings,
         "macro_context": macro_context,
-        "source": "SEC EDGAR (companyfacts XBRL)",
+        "source": "SEC EDGAR (companyfacts XBRL)" if data_source == "SEC" else "OpenDART (전자공시)",
     }
 
 

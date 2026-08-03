@@ -388,8 +388,19 @@ def test_analysis_run_reuses_cache_without_force(client, force_llm_dummy_and_stu
 # ---------------------------------------------------------------------------
 # 종목탐구(company-explorer) API -- 2026-08-03 추가. SEC 호출은 monkeypatch,
 # LLM은 더미모드(force_llm_dummy_and_stub_vxn 재사용 -- VXN은 이 API와
-# 무관하지만 LLM 키를 비우는 부분만 필요해서 그대로 씀).
+# 무관하지만 LLM 키를 비우는 부분만 필요해서 그대로 씀). OpenDART는 이
+# 개발 환경의 .env에 실제 키가 들어갈 수 있어서(2026-08-03 이후), 미국만
+# 검증하는 테스트는 명시적으로 키를 비운다(kis_client.py와 동일 원칙).
 # ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def no_opendart_key():
+    from atrsite.config import settings
+    original = settings.opendart_api_key
+    object.__setattr__(settings, "opendart_api_key", "")
+    yield
+    object.__setattr__(settings, "opendart_api_key", original)
+
 
 @pytest.fixture()
 def stub_sec_search(monkeypatch):
@@ -425,7 +436,7 @@ def stub_sec_facts(monkeypatch):
     monkeypatch.setattr(sec_edgar_client, "normalize_periods", fake_normalize)
 
 
-def test_company_search_returns_us_matches(client, stub_sec_search):
+def test_company_search_returns_us_matches(client, stub_sec_search, no_opendart_key):
     resp = client.get("/api/v1/company/search?q=MU")
     assert resp.status_code == 200
     body = resp.json()

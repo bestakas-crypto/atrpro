@@ -4,10 +4,31 @@
 import pytest
 
 from atrsite.adapters import llm_client
+from atrsite.adapters import opendart_client
 from atrsite.adapters import sec_edgar_client
 from atrsite.repositories import companies as companies_repo
 from atrsite.repositories import company_analysis as company_analysis_repo
 from atrsite.services import company_analysis_service as svc
+
+
+@pytest.fixture()
+def no_opendart_key():
+    """이 개발 환경의 .env에 실제 OpenDART 키가 들어있을 수 있어서(2026-08-03
+    이후), "키 없음" 상태를 검증하는 테스트는 명시적으로 비운다."""
+    from atrsite.config import settings
+    original = settings.opendart_api_key
+    object.__setattr__(settings, "opendart_api_key", "")
+    yield
+    object.__setattr__(settings, "opendart_api_key", original)
+
+
+@pytest.fixture()
+def fake_opendart_key():
+    from atrsite.config import settings
+    original = settings.opendart_api_key
+    object.__setattr__(settings, "opendart_api_key", "dummy-opendart-key")
+    yield
+    object.__setattr__(settings, "opendart_api_key", original)
 
 
 @pytest.fixture(autouse=True)
@@ -86,13 +107,57 @@ def test_build_snapshot_includes_metrics_and_warnings(db_conn):
     assert len(periods) == 2
 
 
-def test_build_snapshot_rejects_kr_company(db_conn):
+def test_build_snapshot_rejects_kr_company_without_opendart_key(db_conn, no_opendart_key):
     company = companies_repo.create_company(
         db_conn, country="KR", security_type="STOCK", name="삼성전자",
         currency="KRW", primary_ticker="005930",
     )
     with pytest.raises(svc.CompanyAnalysisError):
         svc.build_snapshot(db_conn, company)
+
+
+def test_build_snapshot_kr_company_with_opendart_key(db_conn, fake_opendart_key, monkeypatch):
+    """2026-08-03 OpenDART 키 발급 후 실제 라이브 검증(삼성전자 기준)한
+    응답 패턴을 그대로 재현 -- Q4는 연간에서 3분기 누적을 뺀 값이어야
+    하고, 현금흐름은 분기별로 정확히 나뉘어야 한다."""
+    def fake_normalize(corp_code, *, period_type, years, fs_div="CFS", http=None):
+        if period_type == "ANNUAL":
+            return []
+        return [
+            opendart_client.NormalizedPeriod(
+                fiscal_year=2025, fiscal_period="Q4", period_type="QUARTER", period_end="2025-12-31",
+                filed_at=None, accession_no="20260310002820",
+                metrics={"revenue": 90000000000000.0, "gross_profit": 35000000000000.0,
+                         "operating_income": 14000000000000.0, "net_income": 11000000000000.0,
+                         "cash": 57856378000000.0, "receivables": 51127642000000.0,
+                         "inventory": 52636828000000.0, "operating_cash_flow": 28800000000000.0,
+                         "capex": 12000000000000.0, "eps_diluted": 1500.0},
+            ),
+            opendart_client.NormalizedPeriod(
+                fiscal_year=2026, fiscal_period="Q1", period_type="QUARTER", period_end="2026-03-31",
+                filed_at=None, accession_no="20260515002181",
+                metrics={"revenue": 133873444000000.0, "gross_profit": 81913173000000.0,
+                         "operating_income": 57232797000000.0, "net_income": 47225272000000.0,
+                         "cash": 60000000000000.0, "receivables": 55000000000000.0,
+                         "inventory": 53000000000000.0, "operating_cash_flow": None,
+                         "capex": None, "eps_diluted": 7123.0},
+            ),
+        ]
+
+    monkeypatch.setattr(opendart_client, "normalize_periods", fake_normalize)
+
+    company = svc.resolve_company_from_kr_match(db_conn, corp_code="00126380", corp_name="삼성전자", stock_code="005930")
+    snapshot = svc.build_snapshot(db_conn, company)
+    assert snapshot["company"]["ticker"] == "005930"
+    assert snapshot["source"] == "OpenDART (전자공시)"
+    assert len(snapshot["quarterly_periods"]) == 2
+    assert snapshot["quarterly_periods"][-1]["metrics"]["revenue"] == 133873444000000.0
+
+
+def test_resolve_company_from_kr_match_reuses_existing_by_corp_code(db_conn):
+    first = svc.resolve_company_from_kr_match(db_conn, corp_code="00126380", corp_name="삼성전자", stock_code="005930")
+    second = svc.resolve_company_from_kr_match(db_conn, corp_code="00126380", corp_name="삼성전자", stock_code="005930")
+    assert first["id"] == second["id"]
 
 
 def test_build_snapshot_rejects_etf(db_conn):
@@ -153,7 +218,7 @@ def test_execute_pipeline_marks_failed_on_error(db_conn, monkeypatch):
     assert "네트워크 오류" in updated["error_message"]
 
 
-def test_search_companies_notes_missing_opendart_key(monkeypatch):
+def test_search_companies_notes_missing_opendart_key(monkeypatch, no_opendart_key):
     monkeypatch.setattr(
         sec_edgar_client, "search_companies",
         lambda q, **kw: [sec_edgar_client.CompanyMatch(cik=723125, ticker="MU", title="MICRON TECHNOLOGY INC")],
@@ -161,3 +226,15 @@ def test_search_companies_notes_missing_opendart_key(monkeypatch):
     result = svc.search_companies("MU")
     assert result["results"][0]["ticker"] == "MU"
     assert any("OpenDART" in n for n in result["notices"])
+
+
+def test_search_companies_includes_kr_matches_when_configured(monkeypatch, fake_opendart_key):
+    monkeypatch.setattr(sec_edgar_client, "search_companies", lambda q, **kw: [])
+    monkeypatch.setattr(
+        opendart_client, "search_companies",
+        lambda q, **kw: [opendart_client.DartCompanyMatch(corp_code="00126380", corp_name="삼성전자", stock_code="005930")],
+    )
+    result = svc.search_companies("삼성전자")
+    assert result["results"][0]["country"] == "KR"
+    assert result["results"][0]["stock_code"] == "005930"
+    assert result["notices"] == []
