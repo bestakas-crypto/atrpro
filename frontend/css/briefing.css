@@ -38,6 +38,7 @@ body {
   background: #fff;
   color: #14181f;
 }
+.btn-block { display: block; width: 100%; margin-bottom: 12px; }
 
 #briefing-root {
   max-width: 640px;

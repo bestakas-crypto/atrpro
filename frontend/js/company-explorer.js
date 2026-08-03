@@ -5,7 +5,7 @@ import { api } from './api-client.js';
 const el = {};
 function cacheDom() {
   const ids = [
-    'btn-close', 'btn-print', 'search-input', 'btn-search', 'search-status', 'search-results', 'search-notices',
+    'btn-close', 'btn-print', 'btn-speak', 'search-input', 'btn-search', 'search-status', 'search-results', 'search-notices',
     'recent-section', 'recent-list',
     'view-search', 'view-confirm', 'view-progress', 'view-result',
     'confirm-card', 'btn-confirm-analyze', 'btn-confirm-back',
@@ -39,7 +39,40 @@ const GLANCE_METRICS = [
   { key: 'net_debt', label: '재무건전성(순차입금)' },
 ];
 
-const state = { selectedMatch: null, company: null, pollTimer: null };
+const state = { selectedMatch: null, company: null, pollTimer: null, currentResultText: '' };
+
+// 브라우저 내장 TTS로 읽어준다(2026-08-03 추가 -- "목소리는 나중에 LLM으로,
+// 일단 나오기만 하면 됨" 요청에 따라 서버 TTS 없이 무료 Web Speech API만
+// 사용). 마크다운 기호/이모지를 그대로 읽으면 어색해서 미리 걸러낸다.
+function cleanTextForSpeech(text) {
+  return text
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, '')
+    .replace(/#{1,6}\s*/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^-{3,}$/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .replace(/`/g, '')
+    .trim();
+}
+
+function toggleSpeak() {
+  if (!('speechSynthesis' in window)) {
+    alert('이 브라우저는 음성 읽기를 지원하지 않습니다.');
+    return;
+  }
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    el.btnSpeak.textContent = '🔊 듣기';
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(cleanTextForSpeech(state.currentResultText));
+  utterance.lang = 'ko-KR';
+  utterance.onend = () => { el.btnSpeak.textContent = '🔊 듣기'; };
+  utterance.onerror = () => { el.btnSpeak.textContent = '🔊 듣기'; };
+  window.speechSynthesis.speak(utterance);
+  el.btnSpeak.textContent = '⏹ 정지';
+}
 
 function showView(name) {
   ['search', 'confirm', 'progress', 'result'].forEach((v) => {
@@ -243,6 +276,9 @@ function renderResult(polled) {
   el.resultMeta.appendChild(badge);
 
   el.resultText.textContent = polled.result.result_text;
+  state.currentResultText = polled.result.result_text;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  el.btnSpeak.textContent = '🔊 듣기';
 }
 
 function renderGlance(snapshot) {
@@ -285,10 +321,12 @@ function renderWarnings(warnings) {
 // ---------- 이벤트 ----------
 function bindEvents() {
   el.btnClose.addEventListener('click', () => {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     if (window.history.length > 1) window.history.back();
     else window.location.href = 'index.html';
   });
   el.btnPrint.addEventListener('click', () => window.print());
+  el.btnSpeak.addEventListener('click', toggleSpeak);
   el.btnSearch.addEventListener('click', doSearch);
   el.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
@@ -297,6 +335,7 @@ function bindEvents() {
 
   el.btnReanalyze.addEventListener('click', runAnalysis);
   el.btnBackToSearch.addEventListener('click', () => {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     stopPolling();
     el.searchInput.value = '';
     el.searchResults.innerHTML = '';

@@ -5,6 +5,7 @@ import { api } from './api-client.js';
 const el = {
   btnClose: document.getElementById('btn-close'),
   btnPrint: document.getElementById('btn-print'),
+  btnSpeak: document.getElementById('btn-speak'),
   btnGenerate: document.getElementById('btn-generate'),
   btnRegenerate: document.getElementById('btn-regenerate'),
   status: document.getElementById('briefing-status'),
@@ -14,6 +15,41 @@ const el = {
   provider: document.getElementById('briefing-provider'),
   text: document.getElementById('briefing-text'),
 };
+
+let currentResultText = '';
+
+// 브라우저 내장 TTS로 읽어준다(2026-08-03 추가 -- "목소리는 나중에 LLM으로,
+// 일단 나오기만 하면 됨" 요청에 따라 서버 TTS 없이 무료 Web Speech API만
+// 사용). 마크다운 기호/이모지를 그대로 읽으면 어색해서 미리 걸러낸다.
+function cleanTextForSpeech(text) {
+  return text
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, '')
+    .replace(/#{1,6}\s*/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^-{3,}$/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .replace(/`/g, '')
+    .trim();
+}
+
+function toggleSpeak() {
+  if (!('speechSynthesis' in window)) {
+    alert('이 브라우저는 음성 읽기를 지원하지 않습니다.');
+    return;
+  }
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    el.btnSpeak.textContent = '🔊 듣기';
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(cleanTextForSpeech(currentResultText));
+  utterance.lang = 'ko-KR';
+  utterance.onend = () => { el.btnSpeak.textContent = '🔊 듣기'; };
+  utterance.onerror = () => { el.btnSpeak.textContent = '🔊 듣기'; };
+  window.speechSynthesis.speak(utterance);
+  el.btnSpeak.textContent = '⏹ 정지';
+}
 
 // VXN 그리드 판정은 Python이 확정한 값이라, LLM이 쓴 문장과 분리해서
 // 눈에 띄게 먼저 보여준다(2026-08-03 추가).
@@ -56,6 +92,9 @@ function renderResult(briefing) {
   el.time.textContent = '생성: ' + created.toLocaleString('ko-KR');
   el.provider.textContent = briefing.provider;
   el.text.textContent = briefing.result_text;
+  currentResultText = briefing.result_text;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  el.btnSpeak.textContent = '🔊 듣기';
   renderGridRule(briefing.snapshot_json);
   el.result.hidden = false;
   el.btnGenerate.hidden = true;
@@ -80,7 +119,9 @@ async function generate(force) {
 el.btnGenerate.addEventListener('click', () => generate(false));
 el.btnRegenerate.addEventListener('click', () => generate(true));
 el.btnPrint.addEventListener('click', () => window.print());
+el.btnSpeak.addEventListener('click', toggleSpeak);
 el.btnClose.addEventListener('click', () => {
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   if (window.history.length > 1) window.history.back();
   else window.location.href = 'index.html';
 });
