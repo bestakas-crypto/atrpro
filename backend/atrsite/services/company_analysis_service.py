@@ -122,10 +122,11 @@ def _persist_periods(conn: sqlite3.Connection, company_id: str, annotated: list[
 
 # ---------------------------------------------------------------------------
 # LLM 프롬프트 -- 스펙 9절. Python이 만든 스냅샷(재무지표+경고+출처)만 근거로
-# 쓰게 하고, 검색이 필요한 뉴스/공시 맥락은 1단계(stage1_search, Gemini
-# 우선)에, 서술/시나리오는 2단계(stage2_judgment, Gemini->GPT->DeepSeek->
-# Claude)에 맡긴다 -- analysis_service.py(매크로)와 동일한 체인을 그대로
-# 재사용(스펙 지시: "중복되는 LLM 클라이언트는 새로 만들지 말고 재사용").
+# 쓰게 하고, 검색이 필요한 뉴스/공시 맥락은 1단계(stage1_search)에, 서술/
+# 시나리오는 2단계(stage2_judgment)에 맡긴다 -- analysis_service.py(매크로)와
+# 동일한 체인을 그대로 재사용(스펙 지시: "중복되는 LLM 클라이언트는 새로
+# 만들지 말고 재사용"). 실제 공급자 우선순위는 llm_client.py의
+# _FALLBACK_CHAINS 참고(2026-08-04부터 GPT 우선, 제미나이는 제외).
 # ---------------------------------------------------------------------------
 STAGE1_SYSTEM_PROMPT = """\
 당신은 특정 기업에 대한 객관적 정보 조회 담당입니다. 해석하거나 투자

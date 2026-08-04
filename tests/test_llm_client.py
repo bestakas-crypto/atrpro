@@ -110,11 +110,13 @@ def test_ask_raises_when_all_providers_fail(restore_llm_keys, monkeypatch):
         llm_client.ask("system", "user")
 
 
-def test_ask_stage1_search_tries_gemini_first(restore_llm_keys, monkeypatch):
-    """chain="stage1_search"면 키가 있는 Claude보다 Gemini를 먼저 시도해야
-    한다(2026-08-03 추가 -- "객관적 조회는 제미나이" 지시)."""
+def test_ask_stage1_search_tries_gpt_first(restore_llm_keys, monkeypatch):
+    """chain="stage1_search"면 제미나이 키가 있어도(2026-08-04, 사용자가
+    제미나이를 신뢰하지 않아 체인에서 뺌 -- 환각/과거데이터 버퍼 증상, 시황
+    웹서치 괴리) GPT를 먼저 시도해야 한다. Claude 키도 있지만 GPT가 성공하면
+    호출 안 됨."""
     object.__setattr__(settings, "anthropic_api_key", "dummy-anthropic-key")
-    object.__setattr__(settings, "openai_api_key", "")
+    object.__setattr__(settings, "openai_api_key", "dummy-openai-key")
     object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
 
     called_urls = []
@@ -127,18 +129,20 @@ def test_ask_stage1_search_tries_gemini_first(restore_llm_keys, monkeypatch):
                 pass
 
             def json(self):
-                return {"candidates": [{"content": {"parts": [{"text": "Gemini 응답"}]}}]}
+                return {"choices": [{"message": {"content": "GPT 응답"}}]}
         return FakeResponse()
 
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     result = llm_client.ask("system", "user", chain="stage1_search")
-    assert result.provider == "gemini"
-    assert "generativelanguage" in called_urls[0]  # Claude 아니라 Gemini부터 호출됨
+    assert result.provider == "gpt"
+    assert len(called_urls) == 1
+    assert "openai" in called_urls[0]  # 제미나이는 호출조차 안 됨(체인에서 빠짐)
 
 
-def test_ask_gemini_uses_google_search_tool_when_requested(restore_llm_keys, monkeypatch):
-    object.__setattr__(settings, "anthropic_api_key", "")
-    object.__setattr__(settings, "openai_api_key", "")
+def test_call_gemini_uses_google_search_tool_when_requested(restore_llm_keys, monkeypatch):
+    """제미나이는 2026-08-04부로 기본 폴백 체인에서 빠졌지만(사용자가 신뢰
+    안 함) _call_gemini() 자체는 코드에 남겨뒀다("주석 처리" 개념, 완전
+    삭제 아님) -- 나중에 되돌릴 수 있게 이 함수 단위로 직접 검증."""
     object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
 
     captured = {}
@@ -155,15 +159,16 @@ def test_ask_gemini_uses_google_search_tool_when_requested(restore_llm_keys, mon
         return FakeResponse()
 
     monkeypatch.setattr(httpx.Client, "post", fake_post)
-    result = llm_client.ask("system", "user", use_web_search=True, chain="stage1_search")
+    result = llm_client._call_gemini(
+        "system", "user", use_web_search=True, max_tokens=2000, http=httpx.Client(),
+    )
     assert result.used_web_search is True
     assert captured["body"]["tools"] == [{"google_search": {}}]
 
 
-def test_ask_stage1_gemini_fails_over_to_gpt_before_claude(restore_llm_keys, monkeypatch):
-    """1단계에서 제미나이가 실패(예: 쿼터 소진)하면 클로드보다 GPT를 먼저
-    시도해야 한다(2026-08-03 사용자 지시: "제미나이 토큰 다 쓰면 다음엔
-    GPT, 다음엔 클로드 순으로" -- 클로드는 가장 비싸서 최후 폴백으로 아껴둠)."""
+def test_ask_stage1_gpt_fails_over_to_claude(restore_llm_keys, monkeypatch):
+    """1단계에서 GPT가 실패하면(2026-08-04, 제미나이는 체인에서 빠졌으니
+    다음 폴백은 곧장 Claude) Claude로 넘어가야 한다."""
     object.__setattr__(settings, "anthropic_api_key", "dummy-anthropic-key")
     object.__setattr__(settings, "openai_api_key", "dummy-openai-key")
     object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
@@ -172,7 +177,7 @@ def test_ask_stage1_gemini_fails_over_to_gpt_before_claude(restore_llm_keys, mon
 
     def fake_post(self, url, headers=None, json=None, timeout=None):
         called_urls.append(url)
-        if "generativelanguage" in url:
+        if "openai" in url:
             raise httpx.HTTPStatusError("quota exhausted", request=None, response=None)
 
         class FakeResponse:
@@ -180,21 +185,22 @@ def test_ask_stage1_gemini_fails_over_to_gpt_before_claude(restore_llm_keys, mon
                 pass
 
             def json(self):
-                return {"choices": [{"message": {"content": "GPT 응답"}}]}
+                return {"content": [{"type": "text", "text": "Claude 응답"}]}
         return FakeResponse()
 
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     result = llm_client.ask("system", "user", chain="stage1_search")
-    assert result.provider == "gpt"
+    assert result.provider == "claude"
     assert len(called_urls) == 2
-    assert "generativelanguage" in called_urls[0]
-    assert "openai" in called_urls[1]
+    assert "openai" in called_urls[0]
+    assert "anthropic" in called_urls[1]
+    assert not any("generativelanguage" in u for u in called_urls)  # 제미나이 호출 안 됨
 
 
 def test_ask_parses_deepseek_response(restore_llm_keys, monkeypatch):
     """DeepSeek는 OpenAI 호환 chat completions -- GPT와 동일한 응답 형태.
-    (Gemini/GPT 키가 없으니 stage2_judgment 체인에서 바로 DeepSeek까지
-    폴백된다.)"""
+    (GPT 키가 없으니 stage2_judgment 체인에서 바로 DeepSeek까지 폴백된다 --
+    제미나이는 2026-08-04부로 이 체인에 아예 없음.)"""
     object.__setattr__(settings, "anthropic_api_key", "")
     object.__setattr__(settings, "openai_api_key", "")
     object.__setattr__(settings, "gemini_api_key", "")
@@ -215,11 +221,10 @@ def test_ask_parses_deepseek_response(restore_llm_keys, monkeypatch):
     assert result.text == "딥시크 응답"
 
 
-def test_ask_stage2_tries_gemini_first_and_claude_last(restore_llm_keys, monkeypatch):
+def test_ask_stage2_tries_gpt_first_and_claude_last(restore_llm_keys, monkeypatch):
     """2단계(chain="stage2_judgment")는 클로드가 가장 비싸서 맨 마지막
-    최후 폴백이고, 제미나이를 맨 먼저 시도한다(2026-08-03 사용자 지시:
-    "클로드가 더 비싸지 않나? 제미나이-GPT-클로드 순으로"). 검증 안 된
-    DeepSeek는 클로드 바로 앞, 즉 제미나이/GPT 다음 자리."""
+    최후 폴백이고, GPT를 맨 먼저 시도한다(2026-08-04 -- 제미나이는 사용자가
+    신뢰 안 해서 체인에서 빠짐). 검증 안 된 DeepSeek는 클로드 바로 앞 자리."""
     object.__setattr__(settings, "anthropic_api_key", "dummy-anthropic-key")
     object.__setattr__(settings, "openai_api_key", "dummy-openai-key")
     object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
@@ -229,7 +234,7 @@ def test_ask_stage2_tries_gemini_first_and_claude_last(restore_llm_keys, monkeyp
 
     def fake_post(self, url, headers=None, json=None, timeout=None):
         called_urls.append(url)
-        if "generativelanguage" in url or "openai" in url:
+        if "openai" in url:
             raise httpx.HTTPStatusError("fail", request=None, response=None)
 
         class FakeResponse:
@@ -243,12 +248,12 @@ def test_ask_stage2_tries_gemini_first_and_claude_last(restore_llm_keys, monkeyp
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     result = llm_client.ask("system", "user", chain="stage2_judgment")
     assert result.provider == "deepseek"
-    assert len(called_urls) == 3
-    assert "generativelanguage" in called_urls[0]
-    assert "openai" in called_urls[1]
-    assert "deepseek" in called_urls[2]
-    # anthropic(claude)는 한 번도 호출 안 됨 -- 진짜 최후 폴백인지 확인
+    assert len(called_urls) == 2
+    assert "openai" in called_urls[0]
+    assert "deepseek" in called_urls[1]
+    # anthropic(claude)/제미나이는 한 번도 호출 안 됨 -- 진짜 최후 폴백/미사용인지 확인
     assert not any("anthropic" in u for u in called_urls)
+    assert not any("generativelanguage" in u for u in called_urls)
 
 
 def test_ask_max_tokens_override_passed_to_provider(fake_claude_key, monkeypatch):

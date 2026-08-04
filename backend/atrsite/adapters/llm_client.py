@@ -9,10 +9,15 @@ C:\\mmean\\llm\\llm_chain.py의 폴백/재시도/일일한도 패턴을 참고�
 받는" 역할만 하고, 수치 검증/조합은 이 모듈을 호출하는 쪽(analysis_service)
 책임이다.
 
-Claude/GPT/Gemini/DeepSeek 순으로 폴백하며(단계별 우선순위는 _FALLBACK_CHAINS
-참고), ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DEEPSEEK_API_KEY 중
-어느 것도 없으면 더미 모드로 동작한다 (telegram_client.py/kis_client.py와
-동일한 패턴 -- pytest가 실제 키 없이도 항상 통과해야 함).
+단계별 우선순위는 _FALLBACK_CHAINS 참고. ANTHROPIC_API_KEY/OPENAI_API_KEY/
+GEMINI_API_KEY/DEEPSEEK_API_KEY 중 어느 것도 없으면 더미 모드로 동작한다
+(telegram_client.py/kis_client.py와 동일한 패턴 -- pytest가 실제 키 없이도
+항상 통과해야 함).
+
+2026-08-04: 사용자가 제미나이를 신뢰하지 않아(환각 증상, 과거 데이터 버퍼
+문제, 시황 웹서치 결과 괴리) 실제 폴백 체인(_FALLBACK_CHAINS)에서 제미나이를
+뺐다 -- GEMINI_API_KEY 자체나 _call_gemini()는 그대로 남겨둠(주석 처리
+개념, 완전 삭제 아님). 필요해지면 체인에 다시 넣기만 하면 복구됨.
 """
 from __future__ import annotations
 
@@ -159,7 +164,9 @@ def _call_gemini(system: str, user: str, *, use_web_search: bool, max_tokens: in
     return LLMResponse(text=text, provider="gemini", model=settings.llm_model_gemini, used_web_search=use_web_search)
 
 
-_PROVIDER_ORDER = ("claude", "gpt", "gemini")
+# 2026-08-04: 제미나이를 신뢰하지 않는다는 사용자 판단(환각/과거데이터 버퍼
+# 증상, 시황 웹서치 괴리)으로 기본 순서에서도 제외. 이전: ("claude", "gpt", "gemini")
+_PROVIDER_ORDER = ("claude", "gpt")
 
 # 단계(stage)별로 폴백 순서를 다르게 준다(2026-08-03). 처음엔 preferred
 # provider 이름을 그대로 딕셔너리 키로 썼는데, 1단계/2단계가 둘 다 Gemini를
@@ -167,14 +174,23 @@ _PROVIDER_ORDER = ("claude", "gpt", "gemini")
 # 순으로") 같은 키("gemini")로 서로 다른 두 체인을 표현해야 하는 문제가
 # 생김 -- provider 이름이 아니라 "무엇을 하는 단계인가"로 키를 바꿈:
 #
-# - stage1_search(1단계, 객관조회): gemini -> gpt -> claude. 검색 도구가
-#   없는 DeepSeek는 애초에 제외.
-# - stage2_judgment(2단계, 판단): gemini -> gpt -> deepseek -> claude.
-#   클로드가 가장 비싸서 최후 폴백으로 아껴두고, 검증 안 된(=믿음이 덜 가는)
-#   DeepSeek는 클로드 바로 앞 자리에 둠.
+# - stage1_search(1단계, 객관조회): gpt -> claude. 검색 도구가 없는 DeepSeek는
+#   애초에 제외.
+# - stage2_judgment(2단계, 판단): gpt -> deepseek -> claude. 클로드가 가장
+#   비싸서 최후 폴백으로 아껴두고, 검증 안 된(=믿음이 덜 가는) DeepSeek는
+#   클로드 바로 앞 자리에 둠.
+#
+# 2026-08-04: 제미나이는 사용자가 신뢰하지 않아(환각 증상, 과거 데이터 버퍼
+# 문제, 시황 웹서치 결과 괴리) 두 체인 모두에서 제외했다(실사용 기록으로도
+# 항상 1순위 제미나이가 응답해서 폴백이 한 번도 발동 안 했던 걸 확인함,
+# 즉 "독점"이었음). GEMINI_API_KEY/_call_gemini()는 코드에 그대로 남겨둠
+# (주석 처리 개념) -- 필요해지면 아래 튜플에 "gemini"만 다시 넣으면 복구됨.
+# 이전:
+#   "stage1_search": ("gemini", "gpt", "claude"),
+#   "stage2_judgment": ("gemini", "gpt", "deepseek", "claude"),
 _FALLBACK_CHAINS = {
-    "stage1_search": ("gemini", "gpt", "claude"),
-    "stage2_judgment": ("gemini", "gpt", "deepseek", "claude"),
+    "stage1_search": ("gpt", "claude"),
+    "stage2_judgment": ("gpt", "deepseek", "claude"),
 }
 
 
@@ -182,7 +198,7 @@ def ask(
     system: str, user: str, *, use_web_search: bool = False, chain: Optional[str] = None,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
-    """기본 순서는 Claude -> GPT -> Gemini 폴백이지만, chain을 주면
+    """기본 순서는 Claude -> GPT 폴백이지만, chain을 주면
     _FALLBACK_CHAINS에 정의된 단계별 전용 순서를 따른다(2026-08-03 추가 --
     analysis_service가 1단계/2단계마다 다른 순서로 공급자를 시도하게 함).
     체인 안의 공급자가 키 미설정/실패면 정해진 순서대로 폴백한다.
