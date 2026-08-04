@@ -197,16 +197,20 @@ def test_ask_stage1_gpt_fails_over_to_claude(restore_llm_keys, monkeypatch):
     assert not any("generativelanguage" in u for u in called_urls)  # 제미나이 호출 안 됨
 
 
-def test_ask_parses_deepseek_response(restore_llm_keys, monkeypatch):
-    """DeepSeek는 OpenAI 호환 chat completions -- GPT와 동일한 응답 형태.
-    (GPT 키가 없으니 stage2_judgment 체인에서 바로 DeepSeek까지 폴백된다 --
-    제미나이는 2026-08-04부로 이 체인에 아예 없음.)"""
-    object.__setattr__(settings, "anthropic_api_key", "")
-    object.__setattr__(settings, "openai_api_key", "")
-    object.__setattr__(settings, "gemini_api_key", "")
+def test_ask_stage2_tries_deepseek_first(restore_llm_keys, monkeypatch):
+    """2단계(chain="stage2_judgment")는 DeepSeek를 맨 먼저 시도한다(2026-08-04
+    사용자 지시: "stage2_judgment를 딥시크로 해봐"). Claude/GPT 키가 있어도
+    DeepSeek가 성공하면 호출 안 됨."""
+    object.__setattr__(settings, "anthropic_api_key", "dummy-anthropic-key")
+    object.__setattr__(settings, "openai_api_key", "dummy-openai-key")
+    object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
     object.__setattr__(settings, "deepseek_api_key", "dummy-deepseek-key")
 
+    called_urls = []
+
     def fake_post(self, url, headers=None, json=None, timeout=None):
+        called_urls.append(url)
+
         class FakeResponse:
             def raise_for_status(self):
                 pass
@@ -219,12 +223,14 @@ def test_ask_parses_deepseek_response(restore_llm_keys, monkeypatch):
     result = llm_client.ask("system", "user", chain="stage2_judgment")
     assert result.provider == "deepseek"
     assert result.text == "딥시크 응답"
+    assert len(called_urls) == 1
+    assert "deepseek" in called_urls[0]
 
 
-def test_ask_stage2_tries_gpt_first_and_claude_last(restore_llm_keys, monkeypatch):
-    """2단계(chain="stage2_judgment")는 클로드가 가장 비싸서 맨 마지막
-    최후 폴백이고, GPT를 맨 먼저 시도한다(2026-08-04 -- 제미나이는 사용자가
-    신뢰 안 해서 체인에서 빠짐). 검증 안 된 DeepSeek는 클로드 바로 앞 자리."""
+def test_ask_stage2_falls_back_gpt_then_claude_last(restore_llm_keys, monkeypatch):
+    """2단계에서 DeepSeek가 실패하면 GPT, 그다음도 실패하면 클로드(가장
+    비싸서 최후 폴백)로 넘어간다. 제미나이는 이 체인에 아예 없어서 절대
+    호출 안 됨(2026-08-04, 사용자가 제미나이 신뢰 안 함)."""
     object.__setattr__(settings, "anthropic_api_key", "dummy-anthropic-key")
     object.__setattr__(settings, "openai_api_key", "dummy-openai-key")
     object.__setattr__(settings, "gemini_api_key", "dummy-gemini-key")
@@ -234,7 +240,7 @@ def test_ask_stage2_tries_gpt_first_and_claude_last(restore_llm_keys, monkeypatc
 
     def fake_post(self, url, headers=None, json=None, timeout=None):
         called_urls.append(url)
-        if "openai" in url:
+        if "deepseek" in url or "openai" in url:
             raise httpx.HTTPStatusError("fail", request=None, response=None)
 
         class FakeResponse:
@@ -242,18 +248,17 @@ def test_ask_stage2_tries_gpt_first_and_claude_last(restore_llm_keys, monkeypatc
                 pass
 
             def json(self):
-                return {"choices": [{"message": {"content": "딥시크 응답"}}]}
+                return {"content": [{"type": "text", "text": "Claude 응답"}]}
         return FakeResponse()
 
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     result = llm_client.ask("system", "user", chain="stage2_judgment")
-    assert result.provider == "deepseek"
-    assert len(called_urls) == 2
-    assert "openai" in called_urls[0]
-    assert "deepseek" in called_urls[1]
-    # anthropic(claude)/제미나이는 한 번도 호출 안 됨 -- 진짜 최후 폴백/미사용인지 확인
-    assert not any("anthropic" in u for u in called_urls)
-    assert not any("generativelanguage" in u for u in called_urls)
+    assert result.provider == "claude"
+    assert len(called_urls) == 3
+    assert "deepseek" in called_urls[0]
+    assert "openai" in called_urls[1]
+    assert "anthropic" in called_urls[2]
+    assert not any("generativelanguage" in u for u in called_urls)  # 제미나이는 이 체인에 없음
 
 
 def test_ask_max_tokens_override_passed_to_provider(fake_claude_key, monkeypatch):

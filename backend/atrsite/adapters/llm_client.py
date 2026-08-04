@@ -176,21 +176,24 @@ _PROVIDER_ORDER = ("claude", "gpt")
 #
 # - stage1_search(1단계, 객관조회): gpt -> claude. 검색 도구가 없는 DeepSeek는
 #   애초에 제외.
-# - stage2_judgment(2단계, 판단): gpt -> deepseek -> claude. 클로드가 가장
-#   비싸서 최후 폴백으로 아껴두고, 검증 안 된(=믿음이 덜 가는) DeepSeek는
-#   클로드 바로 앞 자리에 둠.
+# - stage2_judgment(2단계, 판단): deepseek -> gpt -> claude(2026-08-04,
+#   "딥시크로 해봐" 사용자 지시로 1순위). 클로드는 가장 비싸서 최후 폴백.
 #
 # 2026-08-04: 제미나이는 사용자가 신뢰하지 않아(환각 증상, 과거 데이터 버퍼
 # 문제, 시황 웹서치 결과 괴리) 두 체인 모두에서 제외했다(실사용 기록으로도
 # 항상 1순위 제미나이가 응답해서 폴백이 한 번도 발동 안 했던 걸 확인함,
 # 즉 "독점"이었음). GEMINI_API_KEY/_call_gemini()는 코드에 그대로 남겨둠
 # (주석 처리 개념) -- 필요해지면 아래 튜플에 "gemini"만 다시 넣으면 복구됨.
+# 2026-08-04: stage2_judgment은 DeepSeek를 1순위로("딥시크로 해봐" 사용자
+# 지시) -- stage1_search는 웹서치가 필요한데 DeepSeek는 검색 도구가 없어서
+# 그대로 GPT 우선 유지.
 # 이전:
 #   "stage1_search": ("gemini", "gpt", "claude"),
 #   "stage2_judgment": ("gemini", "gpt", "deepseek", "claude"),
+#   "stage2_judgment": ("gpt", "deepseek", "claude"),
 _FALLBACK_CHAINS = {
     "stage1_search": ("gpt", "claude"),
-    "stage2_judgment": ("gpt", "deepseek", "claude"),
+    "stage2_judgment": ("deepseek", "gpt", "claude"),
 }
 
 
