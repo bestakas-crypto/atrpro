@@ -1,0 +1,12 @@
+[Unit]
+Description=ATRsite-pro daily web/worker restart (일회성 -- atrsite-daily-restart.timer가 스케줄링)
+
+[Service]
+# 2026-08-05: 워커가 재시작 없이 오래(23시간+) 떠있으면 KIS와 맺은 커넥션이
+# 상한 상태로 남아 모든 시세 조회(국내/해외 가리지 않고)가 500으로 실패하는
+# 문제가 실사용 중 발견됨 -- 재시작하면 즉시 정상화되는 걸 확인했음. 장 시작
+# (09:00 KST) 전에 매일 한 번 깨끗하게 재기동해서 미리 방지한다. atrsite-web도
+# 같은 방식으로 KIS를 호출하므로(수동 시세 갱신, 종목 등록 시 ATR 백필 등)
+# 같이 재시작한다. systemctl 조작이라 root로 실행.
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart atrsite-worker atrsite-web

@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart ATRsite-pro web/worker daily before market open (KST)
+
+[Timer]
+# 장 시작(09:00 KST) 1시간 전, 사용량이 거의 없는 시간대. 서버 타임존이
+# Asia/Seoul이 아니라면(timedatectl) 이 값을 그에 맞게 조정할 것.
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
