@@ -154,4 +154,11 @@ export const api = {
   getScheduleOccurrence: (id) => request('GET', `/api/v1/schedule-occurrences/${id}`),
   updateScheduleOccurrence: (id, body) => request('PATCH', `/api/v1/schedule-occurrences/${id}`, body),
   createScheduleExecution: (occurrenceId, body) => request('POST', `/api/v1/schedule-occurrences/${occurrenceId}/executions`, body),
+
+  // js/api-client.js -- v1.3 일별 총자산/손익 스냅샷(2026-08-05 추가).
+  getLatestSnapshot: () => request('GET', '/api/v1/portfolio-snapshots/latest'),
+  getSnapshotChart: (query) => request('GET', `/api/v1/portfolio-snapshots/chart?${new URLSearchParams(query || {}).toString()}`),
+  getSnapshot: (snapshotDate) => request('GET', `/api/v1/portfolio-snapshots/${snapshotDate}`),
+  getSnapshotItems: (snapshotDate) => request('GET', `/api/v1/portfolio-snapshots/${snapshotDate}/items`),
+  runSnapshotNow: () => request('POST', '/api/v1/portfolio-snapshots/run'),
 };

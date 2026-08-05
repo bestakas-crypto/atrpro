@@ -492,4 +492,81 @@ DDL_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_schedule_occurrence_items_occurrence_id ON schedule_occurrence_items(occurrence_id)",
     "CREATE INDEX IF NOT EXISTS idx_schedule_executions_occurrence_id ON schedule_executions(occurrence_id)",
     "CREATE INDEX IF NOT EXISTS idx_schedule_notification_outbox_status ON schedule_notification_outbox(status, next_attempt_at)",
+
+    # ---- v1.3 -- 일별 총자산/손익 스냅샷 -------------------------------------
+    # 금액은 이 프로젝트 전체 관례대로 REAL(SQLite에 Decimal 타입이 없고 deposits/
+    # trades 등 기존 모든 금액 컬럼이 REAL -- v1.1/v1.2에서도 이미 사용자에게 보고한
+    # 편차). snapshot_date는 UNIQUE -- 같은 KST 날짜에 행이 2개 생기지 않는다
+    # (worker.py가 이 제약 + upsert 정책으로 중복실행을 막는다).
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_daily_snapshots (
+        id                          TEXT PRIMARY KEY,
+        snapshot_date               TEXT NOT NULL UNIQUE,
+        snapshot_at                 TEXT NOT NULL,
+        timezone                    TEXT NOT NULL DEFAULT 'Asia/Seoul',
+        base_currency                TEXT NOT NULL DEFAULT 'KRW',
+        -- 총자산/평가액/예금/원가/손익 -- 계산 불가능하면(FAILED) NULL로 남긴다.
+        -- 가짜 0을 넣지 않는다(스펙 8절 "부분 실패 시 이전 값을 그대로 복사하지 않는다"
+        -- 와 같은 취지 -- 모르면 모른다고 NULL로 남긴다).
+        total_asset_value            REAL,
+        investment_market_value       REAL,
+        cash_deposit_value             REAL,
+        total_cost_basis                 REAL,
+        unrealized_profit                 REAL,
+        realized_profit                    REAL,
+        total_profit                        REAL,
+        profit_rate                          REAL,
+        -- 통화별 자산/손익은 "그 통화 원래 단위" 그대로(원화 환산 아님) --
+        -- usd_krw_rate/jpy_krw_rate와 짝을 이뤄, 화면에서 필요하면 직접 환산한다.
+        krw_asset_value                       REAL,
+        usd_asset_value                        REAL,
+        jpy_asset_value                         REAL,
+        krw_profit                               REAL,
+        usd_profit                                REAL,
+        jpy_profit                                 REAL,
+        usd_krw_rate                                REAL,
+        jpy_krw_rate                                 REAL,
+        included_instrument_count                     INTEGER NOT NULL DEFAULT 0,
+        successful_quote_count                         INTEGER NOT NULL DEFAULT 0,
+        failed_quote_count                              INTEGER NOT NULL DEFAULT 0,
+        -- COMPLETE/PARTIAL/FAILED/STALE_PRICE/MANUAL (스펙 8절).
+        data_quality_status                              TEXT NOT NULL,
+        -- 사람이 읽는 설명(어떤 종목/환율이 빠졌는지, 실패 사유 등).
+        quality_notes                                     TEXT,
+        -- 계산 공식이 바뀐 시점을 구분하기 위한 버전 번호(스펙 17절).
+        calculation_version                                INTEGER NOT NULL DEFAULT 1,
+        created_at                                          TEXT NOT NULL,
+        updated_at                                           TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_snapshot_items (
+        id                        TEXT PRIMARY KEY,
+        snapshot_id                TEXT NOT NULL REFERENCES portfolio_daily_snapshots(id) ON DELETE CASCADE,
+        -- INSTRUMENT(투자종목) / DEPOSIT(예금·현금성 계좌) -- 이 프로젝트엔 계좌
+        -- 종류 구분이 deposits 하나뿐이라 스펙의 CASH/DEPOSIT을 굳이 나누지 않는다.
+        item_type                   TEXT NOT NULL,
+        account_id                   TEXT,
+        account_name_snapshot         TEXT,
+        instrument_id                  TEXT,
+        instrument_name_snapshot        TEXT,
+        instrument_code_snapshot         TEXT,
+        market_code                       TEXT,
+        currency                           TEXT NOT NULL,
+        quantity                            REAL,
+        unit_price                           REAL,
+        price_date                            TEXT,
+        original_value                         REAL NOT NULL,
+        exchange_rate                           REAL,
+        krw_value                                REAL,
+        cost_basis                                REAL,
+        unrealized_profit                          REAL,
+        -- OK / MISSING_PRICE / MISSING_FX / STALE.
+        data_status                                 TEXT NOT NULL,
+        error_message                                TEXT,
+        created_at                                    TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_portfolio_daily_snapshots_status ON portfolio_daily_snapshots(data_quality_status)",
+    "CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_items_snapshot_id ON portfolio_snapshot_items(snapshot_id)",
 ]
