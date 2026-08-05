@@ -307,10 +307,35 @@ async function refreshScheduleBadge() {
   }
 }
 
+// v1.3(2026-08-05) -- 자산추이 배지. 오늘 스냅샷이 없거나 실패/부분완료 상태일
+// 때만 경고 표시(스펙 11절 "오늘 스냅샷이 실패했으면 작은 경고 배지"). 정상
+// 완료면 배지 자체를 숨긴다 -- 성공 여부를 매번 알릴 필요는 없다.
+const ASSET_HISTORY_DEGRADED_STATUSES = new Set(['PARTIAL', 'FAILED']);
+
+async function refreshAssetHistoryBadge() {
+  const badge = document.getElementById('asset-history-badge');
+  if (!badge) return;
+  try {
+    const snap = await api.getLatestSnapshot();
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isDegraded = ASSET_HISTORY_DEGRADED_STATUSES.has(snap.data_quality_status);
+    const isMissingToday = snap.snapshot_date !== todayIso && new Date().getHours() >= 8;
+    if (isDegraded || isMissingToday) {
+      badge.textContent = '!';
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+  } catch (e) {
+    badge.hidden = true;
+  }
+}
+
 function init() {
   cacheDom();
   bindEvents();
   refreshScheduleBadge();
+  refreshAssetHistoryBadge();
 
   window.addEventListener('popstate', (e) => {
     const s = e.state;

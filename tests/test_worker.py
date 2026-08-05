@@ -7,7 +7,7 @@
 """
 import pytest
 
-from datetime import datetime
+from datetime import date, datetime
 
 from atrsite import worker
 from atrsite.config import settings
@@ -34,6 +34,27 @@ def reset_daily_bars_collection_state():
     worker._last_daily_bars_collection_date = None
     yield
     worker._last_daily_bars_collection_date = None
+
+
+@pytest.fixture(autouse=True)
+def reset_snapshot_retry_state():
+    """v1.3 자산 스냅샷 재시도 카운터도 모듈 전역 상태 -- 테스트 간 격리."""
+    worker._snapshot_last_check_date = None
+    worker._snapshot_attempts_today = 0
+    yield
+    worker._snapshot_last_check_date = None
+    worker._snapshot_attempts_today = 0
+
+
+@pytest.fixture(autouse=True)
+def force_telegram_dummy_mode_for_worker():
+    from atrsite.config import settings
+    original_token, original_chat = settings.telegram_bot_token, settings.telegram_chat_id
+    object.__setattr__(settings, "telegram_bot_token", "")
+    object.__setattr__(settings, "telegram_chat_id", "")
+    yield
+    object.__setattr__(settings, "telegram_bot_token", original_token)
+    object.__setattr__(settings, "telegram_chat_id", original_chat)
 
 
 def _make_instrument_with_kis_code(conn, **overrides):
@@ -139,3 +160,102 @@ def test_run_once_only_collects_bars_once_per_day(db_conn, monkeypatch):
 
     worker.run_once(now=datetime(2026, 8, 5, 16, 0))   # 다음 거래일 마감 후 -- 다시 수집
     assert call_count["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# v1.3 자산 스냅샷 -- 06:30/06:40/07:00 재시도 + upsert(중복방지)
+# ---------------------------------------------------------------------------
+
+def _seed_holding_for_snapshot(conn):
+    inst = instruments_repo.create_instrument(conn, name="스냅샷테스트종목", currency="KRW")
+    from atrsite.services import portfolio_service
+    portfolio_service.record_trade(conn, inst["id"], trade_type="buy", price=1000, quantity=10, executed_at="2026-08-01T09:00:00")
+    portfolio_service.commit_quote(conn, inst["id"], price=1200, source="manual")
+    return inst
+
+
+def test_snapshot_not_attempted_before_0630(db_conn, monkeypatch):
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    _seed_holding_for_snapshot(db_conn)
+
+    worker.run_once(now=datetime(2026, 8, 5, 6, 0))
+    from atrsite.repositories import snapshots as snapshots_repo
+    assert snapshots_repo.get_snapshot(db_conn, "2026-08-05") is None
+
+
+def test_snapshot_created_at_0630(db_conn, monkeypatch):
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    _seed_holding_for_snapshot(db_conn)
+
+    worker.run_once(now=datetime(2026, 8, 5, 6, 30))
+    from atrsite.repositories import snapshots as snapshots_repo
+    snap = snapshots_repo.get_snapshot(db_conn, "2026-08-05")
+    assert snap is not None
+    assert snap["data_quality_status"] == "COMPLETE"
+
+
+def test_snapshot_not_duplicated_on_repeated_run_once(db_conn, monkeypatch):
+    """같은 날짜에 run_once()가 여러 번 불려도(worker 중복실행/재시작 시나리오)
+    스냅샷 행이 하나만 존재해야 한다(스펙 9절 idempotency)."""
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    _seed_holding_for_snapshot(db_conn)
+
+    worker.run_once(now=datetime(2026, 8, 5, 6, 30))
+    worker.run_once(now=datetime(2026, 8, 5, 6, 31))
+    worker.run_once(now=datetime(2026, 8, 5, 6, 35))
+
+    from atrsite.repositories import snapshots as snapshots_repo
+    rows = snapshots_repo.list_snapshots(db_conn, start_date="2026-08-05", end_date="2026-08-05")
+    assert len(rows) == 1
+
+
+def test_snapshot_retries_on_partial_then_stops_after_success(db_conn, monkeypatch):
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    inst = instruments_repo.create_instrument(db_conn, name="지연입력종목", currency="KRW")
+    from atrsite.services import portfolio_service
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=1000, quantity=10, executed_at="2026-08-01T09:00:00")
+    # 아직 시세 없음 -> 06:30 시도는 PARTIAL
+
+    worker.run_once(now=datetime(2026, 8, 5, 6, 30))
+    from atrsite.repositories import snapshots as snapshots_repo
+    snap = snapshots_repo.get_snapshot(db_conn, "2026-08-05")
+    assert snap["data_quality_status"] == "PARTIAL"
+
+    # 06:40 재시도 전에 시세가 들어옴 -> 이번엔 COMPLETE로 갱신(같은 행 upsert)
+    portfolio_service.commit_quote(db_conn, inst["id"], price=1200, source="manual")
+    worker.run_once(now=datetime(2026, 8, 5, 6, 40))
+    snap = snapshots_repo.get_snapshot(db_conn, "2026-08-05")
+    assert snap["data_quality_status"] == "COMPLETE"
+
+    rows = snapshots_repo.list_snapshots(db_conn, start_date="2026-08-05", end_date="2026-08-05")
+    assert len(rows) == 1  # 갱신이지 새 행이 아님
+
+
+def test_snapshot_gives_up_after_third_retry(db_conn, monkeypatch):
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    instruments_repo.create_instrument(db_conn, name="영구실패종목", currency="JPY")  # JPY 환율 없음 -> 항상 PARTIAL
+    from atrsite.services import portfolio_service
+    inst = instruments_repo.list_instruments(db_conn)[0]
+    portfolio_service.record_trade(db_conn, inst["id"], trade_type="buy", price=1000, quantity=10, executed_at="2026-08-01T09:00:00")
+    portfolio_service.commit_quote(db_conn, inst["id"], price=1200, source="manual")
+
+    worker.run_once(now=datetime(2026, 8, 5, 6, 30))
+    worker.run_once(now=datetime(2026, 8, 5, 6, 40))
+    worker.run_once(now=datetime(2026, 8, 5, 7, 0))
+    assert worker._snapshot_attempts_today == 3
+
+    # 4번째 호출(07:10)은 이미 소진돼서 재시도하지 않음 -- attempts 그대로.
+    worker.run_once(now=datetime(2026, 8, 5, 7, 10))
+    assert worker._snapshot_attempts_today == 3
+
+
+def test_sleep_seconds_shortened_during_snapshot_window():
+    from atrsite.services.market_schedule import MarketPhase
+    seconds = worker._sleep_seconds_for(MarketPhase.HOLIDAY, now=datetime(2026, 8, 5, 6, 45))
+    assert seconds == worker.IDLE_POLL_INTERVAL_SECONDS  # 휴장일 30분 간격이 아니라 60초
+
+
+def test_sleep_seconds_normal_outside_snapshot_window():
+    from atrsite.services.market_schedule import MarketPhase
+    seconds = worker._sleep_seconds_for(MarketPhase.HOLIDAY, now=datetime(2026, 8, 5, 10, 0))
+    assert seconds == worker.HOLIDAY_POLL_INTERVAL_SECONDS

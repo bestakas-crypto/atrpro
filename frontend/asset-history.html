@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>자산추이</title>
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/asset-history.css" />
+</head>
+<body>
+
+<div class="ah-toolbar">
+  <button id="btn-close" class="btn btn-secondary" aria-label="닫기">← 닫기</button>
+  <span class="ah-toolbar-title">자산추이</span>
+  <button id="btn-recalculate" class="btn btn-secondary btn-small">다시 계산</button>
+</div>
+
+<main id="ah-root">
+
+  <!-- 12.1 최신 현황 -->
+  <section class="ah-summary-card" id="summary-card">
+    <div class="ah-summary-header">
+      <span id="summary-date">-</span>
+      <span id="summary-quality-badge" class="ah-quality-badge" hidden></span>
+    </div>
+    <div class="ah-summary-main">
+      <div>
+        <div class="label">총자산</div>
+        <div class="value big" id="summary-total-asset">-</div>
+      </div>
+      <div>
+        <div class="label">평가손익</div>
+        <div class="value" id="summary-profit">-</div>
+        <div class="rate" id="summary-rate"></div>
+      </div>
+    </div>
+    <div class="ah-summary-grid">
+      <div><div class="label">투자자산</div><div id="summary-investment">-</div></div>
+      <div><div class="label">현금·예금</div><div id="summary-cash">-</div></div>
+    </div>
+    <p class="ah-summary-note" id="summary-note" hidden></p>
+  </section>
+  <p class="ah-empty" id="no-snapshot-empty" hidden>
+    아직 생성된 자산 스냅샷이 없습니다. 매일 오전 6:30(KST)에 자동으로 기록되며,
+    지금 바로 기록하려면 위 "다시 계산" 버튼을 누르세요.
+  </p>
+
+  <!-- 12.2 기간 선택 -->
+  <div class="ah-period-bar" id="period-bar">
+    <button class="ah-period-btn" data-period="1m">1개월</button>
+    <button class="ah-period-btn" data-period="3m">3개월</button>
+    <button class="ah-period-btn" data-period="6m">6개월</button>
+    <button class="ah-period-btn" data-period="1y">1년</button>
+    <button class="ah-period-btn" data-period="all">처음부터</button>
+  </div>
+  <button id="btn-toggle-custom" class="ah-link-btn">사용자 지정 기간 ▾</button>
+  <div class="ah-custom-range" id="custom-range" hidden>
+    <input type="date" id="range-start" aria-label="시작일" />
+    <span>~</span>
+    <input type="date" id="range-end" aria-label="종료일" />
+    <button id="btn-apply-range" class="btn btn-primary btn-small">적용</button>
+  </div>
+
+  <!-- 12.3 차트 전환 -->
+  <div class="ah-chart-tabs" id="chart-tabs">
+    <button class="ah-tab-btn" data-chart="asset">총자산</button>
+    <button class="ah-tab-btn" data-chart="profit">손익</button>
+    <button class="ah-tab-btn" data-chart="rate">수익률</button>
+  </div>
+
+  <div class="ah-chart-wrap" id="chart-wrap">
+    <canvas id="chart-canvas"></canvas>
+    <button id="btn-expand" class="ah-expand-btn" aria-label="확대 보기" title="확대 보기">⤢</button>
+  </div>
+  <p class="ah-empty" id="chart-empty" hidden>이 기간에 표시할 데이터가 없습니다.</p>
+  <p class="ah-hint">금액은 백만원 단위로 표시됩니다. 점을 눌러 정확한 원 단위 값을 확인하세요.</p>
+
+</main>
+
+<!-- 확대 보기(전체화면 API 대신 오버레이 모달 -- 스펙 13절 "전체화면 API 미지원 시
+     일반 확대 화면으로 대체") -->
+<div id="modal-fullscreen-chart" class="ah-fullscreen-overlay" hidden>
+  <div class="ah-fullscreen-header">
+    <span id="fullscreen-chart-title"></span>
+    <button id="btn-close-fullscreen" class="btn btn-secondary btn-small">닫기</button>
+  </div>
+  <div class="ah-fullscreen-canvas-wrap">
+    <canvas id="chart-canvas-fullscreen"></canvas>
+  </div>
+</div>
+
+<div id="toast" class="ah-hint" hidden style="position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#14181f;color:#fff;padding:10px 16px;border-radius:8px;z-index:200;"></div>
+
+<script src="vendor/chart.umd.min.js"></script>
+<script type="module" src="js/asset-history.js"></script>
+</body>
+</html>

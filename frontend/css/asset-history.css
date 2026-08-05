@@ -1,0 +1,166 @@
+/* frontend/css/asset-history.css -- v1.3 자산추이 전용 스타일.
+   withdrawals.css/investment-schedule.css와 같은 독립 페이지 패턴/색상 토큰을
+   그대로 따른다(하드코딩, :root 변수 미사용). 모바일 세로 화면 우선 설계 +
+   가로모드/확대보기 대응(스펙 13절). */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: #14181f;
+  background: #f2f3f5;
+  min-height: 100vh;
+}
+
+.ah-toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d5d9e0;
+  z-index: 10;
+}
+.ah-toolbar-title { font-size: 15px; font-weight: 700; margin-right: auto; }
+
+.btn {
+  padding: 10px 16px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #d5d9e0;
+  background: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  color: #14181f;
+}
+.btn-primary { background: #14181f; color: #fff; border-color: #14181f; }
+.btn-secondary { background: #ffffff; }
+.btn-small { padding: 6px 10px; min-height: 36px; font-size: 12px; }
+
+#ah-root { max-width: 720px; margin: 0 auto; padding: 12px 12px 40px; }
+
+/* 12.1 최신 현황 카드 */
+.ah-summary-card {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.ah-summary-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #838b99; margin-bottom: 10px; }
+.ah-quality-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ah-quality-badge.status-COMPLETE, .ah-quality-badge.status-MANUAL { background: #e8f7ef; color: #0e8a73; }
+.ah-quality-badge.status-PARTIAL, .ah-quality-badge.status-STALE_PRICE { background: #fff4de; color: #a06a0a; }
+.ah-quality-badge.status-FAILED { background: #fdecec; color: #cf3a3a; }
+
+.ah-summary-main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.ah-summary-main .label { font-size: 11px; color: #838b99; margin-bottom: 2px; }
+.ah-summary-main .value { font-family: "SFMono-Regular", Consolas, monospace; font-size: 18px; font-weight: 700; }
+.ah-summary-main .value.big { font-size: 20px; }
+.ah-summary-main .rate { font-size: 12px; margin-top: 2px; font-family: "SFMono-Regular", Consolas, monospace; }
+.pnl-pos { color: #cf3a3a; }
+.pnl-neg { color: #1a6fc4; }
+.pnl-zero { color: #838b99; }
+
+.ah-summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-top: 1px solid #eef0f3; padding-top: 10px; }
+.ah-summary-grid .label { font-size: 11px; color: #838b99; }
+.ah-summary-grid > div > div:last-child { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; }
+
+.ah-summary-note { font-size: 11px; color: #a06a0a; margin: 10px 0 0; }
+
+.ah-empty { text-align: center; color: #838b99; font-size: 13px; padding: 24px 12px; }
+
+/* 12.2 기간 선택 */
+.ah-period-bar { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 2px; }
+.ah-period-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  min-height: 40px;
+  border-radius: 999px;
+  border: 1px solid #d5d9e0;
+  background: #fff;
+  font-size: 12px;
+  color: #4d5561;
+  cursor: pointer;
+}
+.ah-period-btn.active { background: #14181f; color: #fff; border-color: #14181f; }
+
+.ah-link-btn { background: none; border: none; color: #0e8a73; font-size: 12px; padding: 6px 0; cursor: pointer; }
+.ah-custom-range { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.ah-custom-range input {
+  flex: 1;
+  padding: 8px; min-height: 40px; border: 1px solid #d5d9e0; border-radius: 8px; font-size: 13px;
+}
+
+/* 12.3 차트 전환 */
+.ah-chart-tabs { display: flex; gap: 6px; margin: 8px 0; }
+.ah-tab-btn {
+  flex: 1;
+  padding: 10px;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid #d5d9e0;
+  background: #fff;
+  font-size: 13px;
+  color: #4d5561;
+  cursor: pointer;
+}
+.ah-tab-btn.active { background: #14181f; color: #fff; border-color: #14181f; }
+
+.ah-chart-wrap {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  padding: 12px 8px;
+  height: 280px;
+}
+.ah-chart-wrap canvas { width: 100% !important; height: 100% !important; }
+.ah-expand-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid #d5d9e0;
+  background: rgba(255, 255, 255, .9);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.ah-hint { font-size: 11px; color: #838b99; margin-top: 8px; }
+
+/* 13절 -- 가로모드에서 차트 높이 확장 */
+@media (orientation: landscape) and (max-height: 500px) {
+  .ah-chart-wrap { height: 60vh; }
+  .ah-summary-main .value.big { font-size: 17px; }
+}
+
+/* 확대 보기(전체화면 API 대신 오버레이 -- 스펙 13절) */
+.ah-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+}
+.ah-fullscreen-overlay[hidden] { display: none; }
+.ah-fullscreen-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.ah-fullscreen-canvas-wrap { flex: 1; position: relative; }
+.ah-fullscreen-canvas-wrap canvas { width: 100% !important; height: 100% !important; }
+
+@media (max-width: 380px) {
+  .ah-summary-main { grid-template-columns: 1fr; }
+}
