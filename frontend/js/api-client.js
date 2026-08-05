@@ -114,4 +114,23 @@ export const api = {
   runCompanyAnalysis: (companyId) => request('POST', '/api/v1/company-analysis/run', { company_id: companyId }),
   getCompanyAnalysis: (requestId) => request('GET', `/api/v1/company-analysis/${requestId}`),
   listRecentCompanyAnalyses: () => request('GET', '/api/v1/company-analysis/recent'),
+
+  // js/api-client.js -- v1.1 현금 출금기록(2026-08-05 추가).
+  listWithdrawals: (query) => request('GET', `/api/v1/withdrawals?${new URLSearchParams(query).toString()}`),
+  getWithdrawalsSummary: () => request('GET', '/api/v1/withdrawals/summary'),
+  getRecentPurposes: () => request('GET', '/api/v1/withdrawals/purposes'),
+  createWithdrawal: (body) => request('POST', '/api/v1/withdrawals', body),
+  updateWithdrawal: (id, body) => request('PATCH', `/api/v1/withdrawals/${id}`, body),
+  deleteWithdrawal: (id) => request('DELETE', `/api/v1/withdrawals/${id}`),
+  checkWithdrawalDuplicate: (body) => request('POST', '/api/v1/withdrawals/check-duplicate', body),
+  // CSV는 JSON이 아니라 파일 다운로드라 request()의 공용 JSON 파싱 경로를
+  // 안 쓰고 직접 fetch한다 -- API 키가 설정된 배포에서도 인증 헤더가 필요해서
+  // (<a href>만으로는 헤더를 못 보냄) Blob으로 받아 임시 링크로 다운로드시킨다.
+  exportWithdrawalsCsv: async (query) => {
+    const apiKey = getStoredApiKey();
+    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+    const res = await fetch(`/api/v1/withdrawals/export.csv?${new URLSearchParams(query).toString()}`, { headers });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return res.blob();
+  },
 };

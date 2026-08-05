@@ -1300,3 +1300,76 @@ KIS와 맺은 HTTP 커넥션(연결 풀)이 상한 채로 남아 계속 재사�
 atrsite-web을 자동으로 깨끗하게 재시작한다. atrsite-backup.timer와 동일한
 패턴(OnCalendar+Persistent=true). VPS에 배포하고 타이머 활성화 확인
 (다음 실행: 2026-08-06 08:00 KST).
+
+====================================================================
+[v1.1 -- 현금 출금기록 기능] (2026-08-05)
+====================================================================
+사용자가 아주 상세한 스펙(0~17절)으로 요청. feature/cash-withdrawals
+브랜치에서 작업, 1단계(기존 구조 조사) -> 2단계(DB+API+백엔드테스트)
+-> 3단계(상단 nav 정리+출금기록 페이지) -> 4단계(CSV/최근용도/중복경고)
+-> 5단계(회귀+병합+배포) 순서로 스펙이 요구한 순서 그대로 진행.
+
+**조사 결과 스펙 초안과 실제 코드가 다른 부분(추측하지 않고 실제 구조에
+맞춤)**:
+- deposits 테이블엔 금융기관/계좌번호/활성화(is_active) 컬럼이 없음(계좌명+
+  금액+통화뿐) -- "계좌 별칭 · 금융기관 · 통화" 표시는 "계좌명 · 통화"로,
+  "비활성 계좌 제외" 요구사항은 그런 개념 자체가 없어 적용 안 함(TODO로 남김).
+- URL 프리픽스는 스펙 초안의 /api/withdrawals가 아니라 기존 관례대로
+  /api/v1/withdrawals, 수정 메서드는 PUT 아니라 기존처럼 PATCH.
+- 금액은 스펙이 요청한 Decimal이 아니라 기존 전체 코드베이스와 동일하게
+  REAL(float) -- SQLite 자체에 Decimal 타입이 없고 deposits.amount 등
+  전부 REAL이라 이 기능만 다르게 하면 오히려 일관성이 깨짐(사용자에게
+  이 편차를 보고할 것).
+
+**DB**: cash_withdrawals 테이블 신규(withdrawn_at/deposit_account_id/
+account_name_snapshot/purpose/amount/currency/memo/edited/created_at/
+updated_at), 인덱스 4개. deposit_account_id는 FK ON DELETE SET NULL --
+계좌가 삭제돼도 출금기록은 안 지워지고 account_name_snapshot으로 계속
+식별됨(스펙 4 권장 정책). withdrawn_at은 created_at/updated_at(UTC ISO)과
+다르게 Asia/Seoul naive 문자열로 저장(서버 시스템 타임존이 이미 KST라
+market_schedule.py와 같은 전제). edited 컬럼은 "수정됨" 표시용(스펙 9.5) --
+처음엔 updated_at != created_at으로 비교했다가 테스트로 실제 버그 발견
+(초 단위 정밀도라 생성 직후 같은 초 안에 수정하면 구분이 안 됨), 명시적
+플래그로 교체.
+
+**API**(모두 API 키 인증 적용): GET/POST /api/v1/withdrawals, GET/PATCH/
+DELETE /api/v1/withdrawals/{id}, GET .../summary(기간별), GET .../purposes
+(최근 용도), GET .../export.csv(CSV, UTF-8 BOM+수식삽입 방지+내부ID 미포함),
+POST .../check-duplicate(중복 경고용, 저장 자체는 안 막음). 정적 경로
+(/summary, /purposes, /export.csv, /check-duplicate)는 전부 /{id}보다
+먼저 등록(안 그러면 "summary" 같은 문자열이 {id}로 잡혀버림).
+
+**기간 정의**(스펙 6): 오늘/이번주(월요일 시작)/이번달/YTD, 전부 "시작
+이상, 다음 기간 시작 미만" 방식으로 경계 처리(23:59:59 문자열 비교 지양).
+통화별로 따로 합산, 환율 환산 안 함(KRW/USD/JPY가 섞이지 않음). now를
+주입 가능하게 만들어서(period_summary(now=...)) 월말/연말 경계 테스트를
+결정론적으로 검증.
+
+**프론트엔드**: 상단 헤더의 뒤로가기/앞으로가기/새로고침 3개 버튼과 관련
+이벤트 리스너 제거(refreshCurrentView 함수 자체는 deposits.js/
+instrument-detail.js/legacy-export.js가 계속 써서 남김). 새로고침 자리에
+"출금기록"(💸) 아이콘 배치, report.html/company-explorer.html/briefing.html
+과 같은 독립 페이지 패턴으로 withdrawals.html/css/js 신규 작성(target=_blank,
+서비스워커 갱신 확인 블록 포함). .icon-btn 터치 영역을 40px->44px로 통일
+(헤더의 모든 아이콘에 공통 적용). 출금액은 손익 마이너스(빨강)와 혼동 안
+되게 앰버색으로 별도 표시. CSV는 <a href>가 아니라 인증 헤더 포함 fetch+
+Blob 다운로드(API 키 배포 환경 대응).
+
+**추천 기능**: 최근 용도 추천 칩(클릭해도 저장 안 되고 검색창만 채움),
+중복입력 경고(계좌+금액+통화+일시+용도 전부 일치할 때만, 저장 자체는
+안 막음), 계좌별 합계(접기/펼치기), "수정됨" 배지.
+
+**테스트**: 백엔드 23개 신규(등록/조회/수정/삭제, 계좌 미등록/미존재 거부,
+0/음수 금액 거부, 빈 용도 거부, 미지원 통화 거부, 용도 한글부분검색/영문
+대소문자무시검색, 페이지 무관 전체 합계, 통화 미혼합, 계좌별합계, 예금
+잔액/계좌 비연동 원칙 3종, 삭제된 계좌 스냅샷 유지, 인증 거부, CSV
+한글/금액/내부ID미노출, 최근용도, 중복감지, 기간 경계값 4종). 프론트엔드는
+실제 브라우저(격리된 임시 uvicorn 인스턴스 + SSH 터널, 운영 DB/서비스는
+전혀 안 건드림)로 등록/수정/삭제/CSV/중복경고/데스크톱·모바일 레이아웃까지
+실제 클릭 흐름으로 검증 -- 이 과정에서 실제 버그 2개 발견 후 수정:
+(1) 위의 edited 컬럼 버그, (2) CSV 금액이 "60000.0"처럼 파이썬 float
+그대로 찍히던 것(통화별 자릿수 맞춰서 수정).
+
+전체 회귀: pytest 270개(기존 247 + 신규 23) 전부 통과, 기존 ATR/포지션/
+거래/예금/KIS/LLM 기능 전부 그대로 동작 확인. feature/cash-withdrawals를
+main에 병합 후 실서버 배포(사용자가 "묻지말고 자동으로 배포" 명시적 지시).

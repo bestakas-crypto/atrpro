@@ -23,6 +23,7 @@ from .api.health import router as health_router
 from .api.instruments import router as instruments_router
 from .api.legacy import router as legacy_router
 from .api.trades import router as trades_router
+from .api.withdrawals import router as withdrawals_router
 from .config import settings
 from .db import connect, init_db
 
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(instruments_router)
     app.include_router(trades_router)
     app.include_router(deposits_router)
+    app.include_router(withdrawals_router)
     app.include_router(legacy_router)
     app.include_router(analysis_router)
     app.include_router(company_router)

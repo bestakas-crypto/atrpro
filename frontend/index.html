@@ -24,9 +24,13 @@
 
 <header class="app-header">
   <div class="header-nav">
-    <button id="btn-nav-back" class="icon-btn" aria-label="뒤로가기" title="뒤로가기">←</button>
-    <button id="btn-nav-forward" class="icon-btn" aria-label="앞으로가기" title="앞으로가기">→</button>
-    <button id="btn-nav-refresh" class="icon-btn" aria-label="새로고침" title="새로고침">⟳</button>
+    <!-- v1.1(2026-08-05): 뒤로가기/앞으로가기/새로고침 앱 내부 버튼 제거(스펙 2.1
+         -- 브라우저 자체 뒤로가기/Edge 제스처는 그대로 살아있음, 이건 앱이 직접
+         그리던 아이콘만 뺀 것). 새로고침이 있던 자리에 출금기록 아이콘 배치(2.2). -->
+    <a id="btn-open-withdrawals" class="icon-btn" aria-label="출금기록" title="출금기록"
+       href="withdrawals.html" target="_blank" rel="noopener">
+      <span aria-hidden="true">💸</span>
+    </a>
   </div>
   <h1 id="header-title">ATRsite-pro</h1>
   <div class="header-actions">

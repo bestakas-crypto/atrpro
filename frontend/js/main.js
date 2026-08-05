@@ -17,7 +17,7 @@ import { num } from './formatters.js';
 const el = {};
 function cacheDom() {
   const ids = [
-    'btn-nav-back', 'btn-nav-forward', 'btn-nav-refresh', 'header-title',
+    'header-title',
     'view-list', 'btn-add-stock', 'btn-add-deposit', 'btn-open-import',
     'btn-refresh-all-quotes', 'refresh-all-quotes-hint',
     'btn-toggle-total', 'total-cost-sum', 'total-eval-sum', 'total-deposit-sum', 'total-asset-sum',
@@ -145,14 +145,10 @@ const ctx = {
 };
 
 // ---------- 이벤트 바인딩 ----------
+// v1.1(2026-08-05): 뒤로가기/앞으로가기/새로고침 앱 내부 버튼과 이벤트
+// 리스너를 제거함(스펙 2.1). refreshCurrentView() 함수 자체는 deposits.js/
+// instrument-detail.js/legacy-export.js가 CRUD 후 재조회에 계속 쓰므로 남김.
 function bindEvents() {
-  el.btnNavBack.addEventListener('click', () => history.back());
-  el.btnNavForward.addEventListener('click', () => history.forward());
-  // 종목목록/종목상세는 현재 뷰에 맞게 다시 조회(스펙: 전체 새로고침이 아니라
-  // 화면별 재조회). refreshCurrentView()가 이미 state.currentInstrumentId로
-  // 목록/상세를 구분해서 다시 그려준다(2026-08-03, 이전엔 미연결 상태였음).
-  el.btnNavRefresh.addEventListener('click', () => refreshCurrentView());
-
   el.btnAddStock.addEventListener('click', () => {
     el.addStockName.value = '';
     el.addStockKisCode.value = '';
