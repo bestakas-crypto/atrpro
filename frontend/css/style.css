@@ -102,8 +102,10 @@ input[type="number"] {
 }
 
 .icon-btn {
-  min-width: 40px;
-  min-height: 40px;
+  /* v1.1(2026-08-05): 44x44px 이상 터치 영역 요구사항(스펙 2.2) -- 상단 헤더의
+     모든 아이콘 버튼(보고서/종목탐구/브리핑/출금기록)에 공통 적용돼 통일됨. */
+  min-width: 44px;
+  min-height: 44px;
   background: transparent;
   border: none;
   color: var(--text-dim);

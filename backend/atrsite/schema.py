@@ -309,4 +309,36 @@ DDL_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_atr_values_instrument ON atr_values(instrument_id, trade_date)",
     "CREATE INDEX IF NOT EXISTS idx_signal_events_instrument ON signal_events(instrument_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_notification_outbox_status ON notification_outbox(status, next_attempt_at)",
+    """
+    -- backend/atrsite/schema.py -- v1.1 현금 출금기록(개인용 장부, 2026-08-05 추가).
+    -- 스펙 10절 "중요한 비연동 원칙": 이 테이블은 예금(deposits)/포지션/거래이력과
+    -- 완전히 독립적인 기록일 뿐이다. deposits.amount를 자동으로 변경하지 않는다.
+    CREATE TABLE IF NOT EXISTS cash_withdrawals (
+        id                     TEXT PRIMARY KEY,
+        -- 실제 출금 일시. Asia/Seoul 기준 naive 문자열(YYYY-MM-DDTHH:MM:SS)로
+        -- 저장한다 -- created_at/updated_at(UTC ISO, utcnow_iso())과 다른 이유는
+        -- 스펙 3.1: 오늘/이번주/이번달/YTD 합계를 서버·브라우저 모두 Asia/Seoul
+        -- 기준으로 동일하게 계산해야 해서(서버 시스템 시간대 자체가 이미
+        -- Asia/Seoul로 맞춰져 있음 -- market_schedule.py와 동일한 전제).
+        withdrawn_at           TEXT NOT NULL,
+        -- deposits가 하드 삭제되면 NULL로 남는다(스펙: 계좌를 삭제해도 출금기록은
+        -- 지우지 않음) -- account_name_snapshot으로 과거 계좌를 계속 식별한다.
+        deposit_account_id     TEXT REFERENCES deposits(id) ON DELETE SET NULL,
+        account_name_snapshot  TEXT NOT NULL,
+        purpose                TEXT NOT NULL,
+        amount                 REAL NOT NULL,
+        currency               TEXT NOT NULL DEFAULT 'KRW',
+        memo                   TEXT,
+        -- created_at/updated_at 비교(초 단위 정밀도)로는 생성 직후 같은 초 안에
+        -- 수정된 경우 "수정됨"을 못 잡아내서(2026-08-05 테스트로 실제 발견된
+        -- 버그) 명시적 플래그로 스펙 9.5 "수정됨" 표시를 처리한다.
+        edited                 INTEGER NOT NULL DEFAULT 0,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_withdrawn_at ON cash_withdrawals(withdrawn_at)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_deposit_account_id ON cash_withdrawals(deposit_account_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_currency ON cash_withdrawals(currency)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_purpose ON cash_withdrawals(purpose)",
 ]

@@ -75,6 +75,25 @@ class DepositUpdate(BaseModel):
     currency: Optional[str] = None
 
 
+# backend/atrsite/api/schemas.py -- v1.1 현금 출금기록(2026-08-05 추가).
+class WithdrawalCreate(BaseModel):
+    withdrawn_at: str = Field(min_length=1)
+    deposit_account_id: str = Field(min_length=1)
+    purpose: str = Field(min_length=1)
+    amount: float = Field(gt=0)
+    currency: str = Field(min_length=1)
+    memo: Optional[str] = None
+
+
+class WithdrawalUpdate(BaseModel):
+    withdrawn_at: Optional[str] = None
+    deposit_account_id: Optional[str] = None
+    purpose: Optional[str] = None
+    amount: Optional[float] = Field(default=None, gt=0)
+    currency: Optional[str] = None
+    memo: Optional[str] = None
+
+
 class FxRateUpdate(BaseModel):
     rates: dict[str, float] = Field(default_factory=dict)
     display_currency: Optional[str] = None
