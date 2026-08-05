@@ -382,8 +382,26 @@ def list_schedules(
 
 def update_schedule(
     conn: sqlite3.Connection, schedule_id: str, *, title: Optional[str] = None,
-    holiday_policy: Optional[str] = None, status: Optional[str] = None, memo: Optional[str] = "__unset__",  # type: ignore[assignment]
+    market: Optional[str] = None, holiday_policy: Optional[str] = None,
+    notify_days_before: Optional[int] = None, status: Optional[str] = None,
+    memo: Optional[str] = "__unset__",  # type: ignore[assignment]
+    deposit_account_id: Optional[str] = "__unset__",  # type: ignore[assignment]
+    start_date: Optional[str] = None, total_amount: Optional[float] = "__unset__",  # type: ignore[assignment]
+    currency: Optional[str] = None, items: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
+    """일정 수정.
+
+    title/market/holiday_policy/notify_days_before/status/memo는 반복 유형과
+    무관하게 언제든 수정 가능하다. market/holiday_policy가 바뀌면 아직 확정
+    전(SCHEDULED/NOTIFIED)인 회차들의 adjusted_scheduled_date를 새 정책으로
+    다시 계산한다(이미 지난 회차는 건드리지 않음).
+
+    start_date/total_amount/currency/items(날짜·금액·종목배분)는 반복이 아닌
+    ONCE 일정에서만 수정 가능하다 -- 회차가 정확히 1개라 재계산이 안전하지만,
+    반복 일정은 여러 회차와 얽혀 있어 "어느 회차를 바꾸는 건지"가 모호해지므로
+    막는다(취소 후 재등록 안내). 그 1개 회차가 이미 완료/건너뜀/취소/부분실행
+    상태면 그것도 막는다(실제로 처리된 계획을 조용히 바꾸면 안 됨).
+    """
     existing = get_schedule(conn, schedule_id)
     if existing is None:
         return None
@@ -391,24 +409,133 @@ def update_schedule(
         raise ScheduleValidationError(f"지원하지 않는 status: {status}")
     if holiday_policy is not None and holiday_policy not in schedule_engine.HOLIDAY_POLICIES:
         raise ScheduleValidationError(f"지원하지 않는 holiday_policy: {holiday_policy}")
+    if market is not None and market not in schedule_engine.MARKETS:
+        raise ScheduleValidationError(f"지원하지 않는 market: {market}")
+
+    structural_change = start_date is not None or total_amount != "__unset__" or items is not None
+    if structural_change and existing["recurrence_type"] != "ONCE":
+        raise ScheduleValidationError(
+            "반복 일정은 날짜·금액·종목배분을 수정할 수 없습니다(여러 회차 중 어느 회차를 "
+            "바꾸는지 모호해짐) -- 취소 후 새로 등록하세요"
+        )
 
     fields: dict[str, Any] = {}
     if title is not None:
         if not title.strip():
             raise ScheduleValidationError("title은 비어 있을 수 없습니다")
         fields["title"] = title.strip()
+    if market is not None:
+        fields["market"] = market
     if holiday_policy is not None:
         fields["holiday_policy"] = holiday_policy
+    if notify_days_before is not None:
+        fields["notify_days_before"] = notify_days_before
     if status is not None:
         fields["status"] = status
     if memo != "__unset__":
         fields["memo"] = memo
+    if deposit_account_id != "__unset__":
+        fields["deposit_account_id"] = deposit_account_id
+        fields["account_name_snapshot"] = _lookup_deposit_snapshot(conn, deposit_account_id)
+    if structural_change:
+        if start_date is not None:
+            fields["start_date"] = start_date
+        if total_amount != "__unset__":
+            fields["total_amount"] = total_amount
+        if currency is not None:
+            fields["currency"] = currency
 
-    if not fields:
-        return existing
-    fields["updated_at"] = utcnow_iso()
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    conn.execute(f"UPDATE investment_schedules SET {set_clause} WHERE id = ?", (*fields.values(), schedule_id))
+    if fields:
+        fields["updated_at"] = utcnow_iso()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(f"UPDATE investment_schedules SET {set_clause} WHERE id = ?", (*fields.values(), schedule_id))
+
+    effective_market = market if market is not None else existing["market"]
+    effective_holiday_policy = holiday_policy if holiday_policy is not None else existing["holiday_policy"]
+
+    # market/holiday_policy 변경 -> 아직 확정 안 된 회차만 새 정책으로 재계산.
+    if market is not None or holiday_policy is not None:
+        rows = conn.execute(
+            "SELECT id, original_scheduled_date FROM schedule_occurrences "
+            "WHERE schedule_id = ? AND status IN ('SCHEDULED', 'NOTIFIED')",
+            (schedule_id,),
+        ).fetchall()
+        for row in rows:
+            orig = date.fromisoformat(row["original_scheduled_date"])
+            adj = schedule_engine.adjust_for_holiday(orig, market=effective_market, holiday_policy=effective_holiday_policy)
+            conn.execute(
+                "UPDATE schedule_occurrences SET adjusted_scheduled_date = ?, needs_holiday_confirmation = ?, updated_at = ? WHERE id = ?",
+                (adj.adjusted.isoformat(), 1 if adj.needs_confirmation else 0, utcnow_iso(), row["id"]),
+            )
+
+    if structural_change:
+        occ_row = conn.execute(
+            "SELECT * FROM schedule_occurrences WHERE schedule_id = ?", (schedule_id,)
+        ).fetchone()
+        if occ_row["status"] not in ("SCHEDULED", "NOTIFIED"):
+            raise ScheduleValidationError(
+                "이미 처리된(완료/건너뜀/취소/부분실행) 회차는 날짜·금액·종목배분을 "
+                "수정할 수 없습니다 -- 삭제 후 다시 등록하세요"
+            )
+
+        new_start_date = start_date if start_date is not None else existing["start_date"]
+        new_total_amount = total_amount if total_amount != "__unset__" else existing["total_amount"]
+        new_currency = currency if currency is not None else existing["currency"]
+
+        if items is not None:
+            for item in items:
+                if item["ratio_percent"] <= 0:
+                    raise ScheduleValidationError("ratio_percent는 0보다 커야 합니다")
+            conn.execute("DELETE FROM investment_schedule_items WHERE schedule_id = ?", (schedule_id,))
+            now = utcnow_iso()
+            item_snapshots = []
+            for item in items:
+                snapshot = _lookup_instrument_snapshot(conn, item["instrument_id"])
+                conn.execute(
+                    "INSERT INTO investment_schedule_items "
+                    "(id, schedule_id, instrument_id, instrument_name_snapshot, ratio_percent, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (new_id(), schedule_id, item["instrument_id"], snapshot, item["ratio_percent"], now),
+                )
+                item_snapshots.append({
+                    "instrument_id": item["instrument_id"],
+                    "instrument_name_snapshot": snapshot,
+                    "ratio_percent": item["ratio_percent"],
+                })
+        else:
+            item_snapshots = [
+                {
+                    "instrument_id": r["instrument_id"],
+                    "instrument_name_snapshot": r["instrument_name_snapshot"],
+                    "ratio_percent": r["ratio_percent"],
+                }
+                for r in conn.execute(
+                    "SELECT * FROM investment_schedule_items WHERE schedule_id = ?", (schedule_id,)
+                ).fetchall()
+            ]
+
+        d = date.fromisoformat(new_start_date)
+        adj = schedule_engine.adjust_for_holiday(d, market=effective_market, holiday_policy=effective_holiday_policy)
+        conn.execute(
+            "UPDATE schedule_occurrences SET original_scheduled_date = ?, adjusted_scheduled_date = ?, "
+            "needs_holiday_confirmation = ?, planned_amount = ?, currency = ?, updated_at = ? WHERE id = ?",
+            (
+                adj.original.isoformat(), adj.adjusted.isoformat(), 1 if adj.needs_confirmation else 0,
+                new_total_amount, new_currency, utcnow_iso(), occ_row["id"],
+            ),
+        )
+        conn.execute("DELETE FROM schedule_occurrence_items WHERE occurrence_id = ?", (occ_row["id"],))
+        if item_snapshots and new_total_amount is not None:
+            ratios = [it["ratio_percent"] for it in item_snapshots]
+            amounts = schedule_engine.allocate_by_ratio(new_total_amount, ratios, currency=new_currency)
+            now = utcnow_iso()
+            for item, amt in zip(item_snapshots, amounts):
+                conn.execute(
+                    "INSERT INTO schedule_occurrence_items "
+                    "(id, occurrence_id, instrument_id, instrument_name_snapshot, planned_amount, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (new_id(), occ_row["id"], item["instrument_id"], item["instrument_name_snapshot"], amt, now),
+                )
 
     # 스케줄 자체를 CANCELLED로 바꾸면, 아직 미확정인 미래 회차도 함께 취소 처리한다
     # (스펙 취지: 상위 일정을 취소했는데 개별 회차만 예정 상태로 남아 알림이 계속

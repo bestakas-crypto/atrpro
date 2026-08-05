@@ -158,6 +158,126 @@ def test_cancelling_schedule_cancels_future_occurrences(client):
     assert all(o["status"] == "CANCELLED" for o in sched["occurrences"])
 
 
+def test_edit_once_schedule_amount_and_items_regenerates_occurrence(client, instrument_a, instrument_b):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={
+            "schedule_type": "BUY", "title": "1회차", "market": "KRX", "recurrence_type": "ONCE",
+            "start_date": "2026-08-05", "holiday_policy": "NEXT_BUSINESS_DAY", "total_amount": 9000000,
+            "currency": "KRW", "items": [
+                {"instrument_id": instrument_a, "ratio_percent": 50},
+                {"instrument_id": instrument_b, "ratio_percent": 50},
+            ],
+        },
+    )
+    schedule_id = resp.json()["id"]
+    old_occ_id = resp.json()["occurrences"][0]["id"]
+
+    resp = client.patch(
+        f"/api/v1/investment-schedules/{schedule_id}",
+        json={"total_amount": 2918796, "items": [
+            {"instrument_id": instrument_a, "ratio_percent": 50},
+            {"instrument_id": instrument_b, "ratio_percent": 50},
+        ]},
+    )
+    assert resp.status_code == 200
+    sched = resp.json()
+    assert sched["total_amount"] == 2918796
+    occ = sched["occurrences"][0]
+    assert occ["id"] == old_occ_id  # 같은 회차를 재계산(새 회차를 만들지 않음)
+    assert occ["planned_amount"] == 2918796
+
+    detail = client.get(f"/api/v1/schedule-occurrences/{occ['id']}").json()
+    assert {i["planned_amount"] for i in detail["items"]} == {1459398}
+
+
+def test_edit_once_schedule_start_date_recomputes_holiday_adjustment(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={"schedule_type": "GENERAL", "title": "일정", "market": "KRX", "recurrence_type": "ONCE", "start_date": "2026-08-10"},
+    )
+    schedule_id = resp.json()["id"]
+
+    # 2026-01-01은 신정(고정공휴일) -- NEXT_BUSINESS_DAY 정책이면 1/2로 보정돼야 함.
+    resp = client.patch(f"/api/v1/investment-schedules/{schedule_id}", json={"start_date": "2026-01-01"})
+    assert resp.status_code == 200
+    occ = resp.json()["occurrences"][0]
+    assert occ["original_scheduled_date"] == "2026-01-01"
+    assert occ["adjusted_scheduled_date"] == "2026-01-02"
+
+
+def test_edit_recurring_schedule_amount_rejected(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={"schedule_type": "BUY", "title": "매주", "recurrence_type": "WEEKLY", "start_date": "2026-08-10", "occurrence_count": 3, "total_amount": 300},
+    )
+    schedule_id = resp.json()["id"]
+    resp = client.patch(f"/api/v1/investment-schedules/{schedule_id}", json={"total_amount": 900})
+    assert resp.status_code == 400
+    assert "반복" in resp.json()["detail"]
+
+
+def test_edit_completed_once_occurrence_amount_rejected(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={"schedule_type": "GENERAL", "title": "완료건", "recurrence_type": "ONCE", "start_date": "2026-08-10", "total_amount": 1000},
+    )
+    schedule_id = resp.json()["id"]
+    occ_id = resp.json()["occurrences"][0]["id"]
+    client.patch(f"/api/v1/schedule-occurrences/{occ_id}", json={"status": "COMPLETED"})
+
+    resp = client.patch(f"/api/v1/investment-schedules/{schedule_id}", json={"total_amount": 2000})
+    assert resp.status_code == 400
+    assert "이미 처리된" in resp.json()["detail"]
+
+
+def test_edit_title_memo_always_allowed_regardless_of_recurrence(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={"schedule_type": "BUY", "title": "매주", "recurrence_type": "WEEKLY", "start_date": "2026-08-10", "occurrence_count": 2},
+    )
+    schedule_id = resp.json()["id"]
+    resp = client.patch(f"/api/v1/investment-schedules/{schedule_id}", json={"title": "매주(수정됨)", "memo": "메모 추가"})
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "매주(수정됨)"
+    assert resp.json()["memo"] == "메모 추가"
+
+
+def test_edit_holiday_policy_recomputes_future_occurrences_only(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={
+            "schedule_type": "GENERAL", "title": "매주", "market": "KRX", "recurrence_type": "WEEKLY",
+            "start_date": "2025-12-29", "occurrence_count": 2, "holiday_policy": "NO_ADJUSTMENT",
+        },
+    )
+    sched = resp.json()
+    first_occ_id = sched["occurrences"][0]["id"]
+    second_occ_id = sched["occurrences"][1]["id"]  # 2026-01-05 (신정 아님, 그대로일 것)
+    # 첫 회차는 이미 완료 처리 -> 재계산 대상에서 제외돼야 함.
+    client.patch(f"/api/v1/schedule-occurrences/{first_occ_id}", json={"status": "COMPLETED"})
+
+    resp = client.patch(f"/api/v1/investment-schedules/{sched['id']}", json={"holiday_policy": "NEXT_BUSINESS_DAY"})
+    assert resp.status_code == 200
+    occs = {o["id"]: o for o in resp.json()["occurrences"]}
+    assert occs[first_occ_id]["adjusted_scheduled_date"] == sched["occurrences"][0]["adjusted_scheduled_date"]  # 안 바뀜
+    assert occs[second_occ_id]["adjusted_scheduled_date"] == occs[second_occ_id]["original_scheduled_date"]  # 평일이라 그대로
+
+
+def test_delete_schedule_cascades_occurrences(client):
+    resp = client.post(
+        "/api/v1/investment-schedules",
+        json={"schedule_type": "GENERAL", "title": "삭제될 일정", "recurrence_type": "ONCE", "start_date": "2026-08-10"},
+    )
+    schedule_id = resp.json()["id"]
+    occ_id = resp.json()["occurrences"][0]["id"]
+
+    resp = client.delete(f"/api/v1/investment-schedules/{schedule_id}")
+    assert resp.status_code == 204
+    assert client.get(f"/api/v1/investment-schedules/{schedule_id}").status_code == 404
+    assert client.get(f"/api/v1/schedule-occurrences/{occ_id}").status_code == 404
+
+
 def test_list_occurrences_filter_by_schedule(client):
     resp = client.post(
         "/api/v1/investment-schedules",

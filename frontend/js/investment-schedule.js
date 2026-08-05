@@ -17,6 +17,7 @@ const state = {
   instruments: [],
   deposits: [],
   itemRowCount: 0,
+  editingScheduleId: null, // null이면 신규 등록 모드, 값이 있으면 해당 일정 수정 모드
 };
 
 const el = {};
@@ -26,7 +27,8 @@ function cacheDom() {
     'btn-close', 'btn-add-schedule', 'today-list', 'today-empty', 'overdue-list', 'overdue-empty',
     'filter-schedule-type', 'filter-status', 'filter-start-date', 'filter-end-date',
     'btn-apply-filter', 'btn-reset-filter', 'is-list', 'is-empty',
-    'modal-schedule', 'sc-title', 'sc-type', 'sc-market', 'sc-recurrence-type', 'sc-interval-row',
+    'modal-schedule', 'sc-modal-title', 'sc-status-group', 'sc-status',
+    'sc-title', 'sc-type', 'sc-market', 'sc-recurrence-type', 'sc-interval-row',
     'sc-interval', 'sc-start-date', 'sc-end-mode-row', 'sc-end-mode', 'sc-occurrence-count-group',
     'sc-occurrence-count', 'sc-end-date-group', 'sc-end-date', 'sc-holiday-policy',
     'sc-notify-days-before', 'sc-total-amount', 'sc-currency', 'sc-account', 'sc-items',
@@ -176,12 +178,42 @@ async function openOccurrenceModal(occId) {
     actions.push(['건너뜀', () => patchOccurrence(occId, { status: 'SKIPPED' })]);
     actions.push(['취소', () => patchOccurrence(occId, { status: 'CANCELLED' })]);
   }
+
+  // 일정 자체(스케줄) 수정/삭제 -- 회차가 아니라 그 회차를 만든 스케줄을 대상으로
+  // 동작한다(반복 일정이면 여러 회차가 한꺼번에 영향받을 수 있음, 수정 모달이
+  // 실제 허용 범위를 반복유형에 맞게 다시 잠근다).
+  let schedule = null;
+  try {
+    schedule = await api.getInvestmentSchedule(occ.schedule_id);
+  } catch (e) {
+    // 스케줄 조회 실패해도 회차 처리 자체는 계속 쓸 수 있어야 하니 조용히 무시.
+  }
+  if (schedule) {
+    actions.push(['일정 수정', () => { el.modalOccurrence.hidden = true; openScheduleModal(schedule); }]);
+    actions.push(['일정 삭제', () => handleDeleteSchedule(schedule)]);
+  }
+
   el.occActions.innerHTML = actions.map(([label], idx) => `<button class="btn btn-secondary btn-block" data-action-idx="${idx}">${label}</button>`).join('');
   el.occActions.querySelectorAll('[data-action-idx]').forEach((btn, idx) => {
     btn.addEventListener('click', actions[idx][1]);
   });
 
   el.modalOccurrence.hidden = false;
+}
+
+async function handleDeleteSchedule(schedule) {
+  const warn = schedule.recurrence_type === 'ONCE'
+    ? '이 일정을 삭제할까요? 되돌릴 수 없습니다.'
+    : `"${schedule.title}"의 모든 회차(${schedule.occurrences.length}개)를 함께 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`;
+  if (!window.confirm(warn)) return;
+  try {
+    await api.deleteInvestmentSchedule(schedule.id);
+    showToast('일정을 삭제했습니다.');
+    el.modalOccurrence.hidden = true;
+    await Promise.all([loadToday(), loadList()]);
+  } catch (e) {
+    showToast('삭제하지 못했습니다.');
+  }
 }
 
 async function patchOccurrence(occId, body) {
@@ -242,24 +274,52 @@ function updateEndModeVisibility() {
   el.scEndDateGroup.hidden = byCount;
 }
 
-function openScheduleModal() {
-  el.scTitle.value = '';
-  el.scType.value = 'BUY';
-  el.scMarket.value = 'NONE';
-  el.scRecurrenceType.value = 'ONCE';
-  el.scInterval.value = '1';
-  el.scStartDate.value = '';
-  el.scEndMode.value = 'count';
-  el.scOccurrenceCount.value = '1';
-  el.scEndDate.value = '';
-  el.scHolidayPolicy.value = 'NEXT_BUSINESS_DAY';
-  el.scNotifyDaysBefore.value = '0';
-  el.scTotalAmount.value = '';
-  el.scCurrency.value = 'KRW';
-  el.scAccount.value = '';
-  el.scMemo.value = '';
+// scheduleToEdit이 없으면 신규 등록 모드, 있으면(GET /investment-schedules/{id}
+// 응답 전체) 그 일정을 수정하는 모드로 연다.
+function openScheduleModal(scheduleToEdit = null) {
+  const isEdit = !!scheduleToEdit;
+  const isOnce = isEdit ? scheduleToEdit.recurrence_type === 'ONCE' : true;
+  state.editingScheduleId = isEdit ? scheduleToEdit.id : null;
+
+  el.scTitle.value = isEdit ? scheduleToEdit.title : '';
+  el.scType.value = isEdit ? scheduleToEdit.schedule_type : 'BUY';
+  el.scMarket.value = isEdit ? scheduleToEdit.market : 'NONE';
+  el.scRecurrenceType.value = isEdit ? scheduleToEdit.recurrence_type : 'ONCE';
+  el.scInterval.value = isEdit ? String(scheduleToEdit.recurrence_interval) : '1';
+  el.scStartDate.value = isEdit ? scheduleToEdit.start_date : '';
+  el.scEndMode.value = isEdit && scheduleToEdit.end_date ? 'date' : 'count';
+  el.scOccurrenceCount.value = isEdit && scheduleToEdit.occurrence_count ? String(scheduleToEdit.occurrence_count) : '1';
+  el.scEndDate.value = isEdit && scheduleToEdit.end_date ? scheduleToEdit.end_date : '';
+  el.scHolidayPolicy.value = isEdit ? scheduleToEdit.holiday_policy : 'NEXT_BUSINESS_DAY';
+  el.scNotifyDaysBefore.value = isEdit ? String(scheduleToEdit.notify_days_before) : '0';
+  el.scTotalAmount.value = isEdit && scheduleToEdit.total_amount != null ? String(scheduleToEdit.total_amount) : '';
+  el.scCurrency.value = isEdit ? scheduleToEdit.currency : 'KRW';
+  el.scAccount.value = isEdit && scheduleToEdit.deposit_account_id ? scheduleToEdit.deposit_account_id : '';
+  el.scMemo.value = isEdit ? (scheduleToEdit.memo || '') : '';
   el.scItems.innerHTML = '';
+  state.itemRowCount = 0;
+  if (isEdit && scheduleToEdit.items) {
+    scheduleToEdit.items.forEach((it) => addItemRow(it.instrument_id, it.ratio_percent));
+  }
   el.scPreview.hidden = true;
+
+  el.scStatusGroup.hidden = !isEdit;
+  if (isEdit) el.scStatus.value = scheduleToEdit.status;
+
+  // 반복 일정(ONCE가 아님)은 이미 여러 회차가 생성돼 있어 날짜/금액/종목배분을
+  // 바꾸면 "어느 회차"인지 모호해진다 -- 백엔드가 거부하는 필드를 UI에서도
+  // 미리 잠가서 헷갈리지 않게 한다. 반복유형 자체 전환(반복<->ONCE)도 막는다.
+  const lockStructural = isEdit && !isOnce;
+  [el.scType, el.scInterval, el.scStartDate, el.scEndMode, el.scOccurrenceCount,
+   el.scEndDate, el.scTotalAmount, el.scCurrency, el.scAccount, el.btnAddItemRow].forEach((elm) => {
+    elm.disabled = lockStructural;
+  });
+  el.scItems.querySelectorAll('select, input, button').forEach((elm) => { elm.disabled = lockStructural; });
+  el.scRecurrenceType.disabled = isEdit;
+
+  el.scModalTitle.textContent = isEdit ? '일정 수정' : '새 투자 일정';
+  el.btnScheduleSave.textContent = isEdit ? '저장' : '등록';
+
   updateRecurrenceFieldVisibility();
   el.modalSchedule.hidden = false;
 }
@@ -291,7 +351,48 @@ function buildSchedulePayload() {
   return payload;
 }
 
+// 수정 모드에서는 백엔드가 실제로 받아들이는 필드만 보낸다(schedule_type/
+// recurrence_type/recurrence_interval/occurrence_count/end_date는 수정 API에
+// 아예 없음 -- 반복 규칙은 취소 후 재등록해야 함). ONCE가 아니면 날짜/금액/
+// 종목배분도 뺀다(보내봐야 400 거부됨, UI에서도 이미 잠가둔 값).
+function buildScheduleEditPayload(isOnce) {
+  const payload = {
+    title: el.scTitle.value.trim(),
+    market: el.scMarket.value,
+    holiday_policy: el.scHolidayPolicy.value,
+    notify_days_before: Number(el.scNotifyDaysBefore.value) || 0,
+    memo: el.scMemo.value.trim() || null,
+    status: el.scStatus.value,
+    deposit_account_id: el.scAccount.value || null,
+  };
+  if (isOnce) {
+    payload.start_date = el.scStartDate.value;
+    payload.total_amount = el.scTotalAmount.value ? Number(el.scTotalAmount.value) : null;
+    payload.currency = el.scCurrency.value;
+    payload.items = collectItemRows();
+  }
+  return payload;
+}
+
 async function handleScheduleSave() {
+  const isEdit = !!state.editingScheduleId;
+
+  if (isEdit) {
+    const isOnce = el.scRecurrenceType.value === 'ONCE';
+    const payload = buildScheduleEditPayload(isOnce);
+    if (!payload.title) { showToast('제목을 입력하세요.'); return; }
+    try {
+      await api.updateInvestmentSchedule(state.editingScheduleId, payload);
+      showToast('일정을 수정했습니다.');
+      el.modalSchedule.hidden = true;
+      await Promise.all([loadToday(), loadList()]);
+    } catch (e) {
+      const detail = e instanceof ApiError ? e.detail : String(e);
+      showToast(`수정 실패: ${detail}`);
+    }
+    return;
+  }
+
   const payload = buildSchedulePayload();
   if (!payload.title) { showToast('제목을 입력하세요.'); return; }
   if (!payload.start_date) { showToast('시작일을 입력하세요.'); return; }
@@ -323,7 +424,9 @@ async function loadReferenceData() {
 
 function bindEvents() {
   el.btnClose.addEventListener('click', () => window.close());
-  el.btnAddSchedule.addEventListener('click', openScheduleModal);
+  // openScheduleModal(scheduleToEdit)에 클릭 이벤트 객체가 그대로 넘어가면 안 되므로
+  // (없으면 신규 등록 모드) 반드시 인자 없이 호출하는 래퍼를 통해 연결한다.
+  el.btnAddSchedule.addEventListener('click', () => openScheduleModal());
   el.btnScheduleCancel.addEventListener('click', () => { el.modalSchedule.hidden = true; });
   el.modalSchedule.addEventListener('click', (e) => { if (e.target === el.modalSchedule) el.modalSchedule.hidden = true; });
   el.btnScheduleSave.addEventListener('click', handleScheduleSave);

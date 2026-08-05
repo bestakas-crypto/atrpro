@@ -167,12 +167,22 @@ class InvestmentScheduleCreate(BaseModel):
 
 
 class InvestmentScheduleUpdate(BaseModel):
-    """반복 규칙/시작일/회차는 생성된 occurrence와 얽혀 있어 수정 대상에서 뺀다 --
-    바꾸고 싶으면 스케줄을 취소하고 새로 등록한다(스펙 취지: 예측 가능성 우선)."""
+    """title/market/holiday_policy/notify_days_before/status/memo는 반복 유형과
+    무관하게 언제든 수정 가능. start_date/total_amount/currency/items(날짜·금액·
+    종목배분)는 ONCE 일정에서만 허용된다 -- 반복 일정은 회차가 여러 개라 "어느
+    회차를 바꾸는지" 모호해지므로 취소 후 재등록을 안내한다(repositories/
+    schedules.py의 update_schedule 참고)."""
     title: Optional[str] = None
+    market: Optional[str] = None
     holiday_policy: Optional[str] = None
+    notify_days_before: Optional[int] = Field(default=None, ge=0)
     status: Optional[str] = None
     memo: Optional[str] = None
+    deposit_account_id: Optional[str] = None
+    start_date: Optional[str] = None
+    total_amount: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = None
+    items: Optional[list[ScheduleItemInput]] = None
 
 
 class ScheduleOccurrenceUpdate(BaseModel):

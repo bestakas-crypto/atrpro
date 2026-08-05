@@ -85,10 +85,22 @@
 
 </main>
 
-<!-- 일정 등록 모달 -->
+<!-- 일정 등록/수정 모달 -->
 <div id="modal-schedule" class="modal-overlay" hidden>
   <div class="modal-box">
-    <h3>새 투자 일정</h3>
+    <h3 id="sc-modal-title">새 투자 일정</h3>
+
+    <!-- 수정 모드에서만 표시. 반복 일정은 날짜/금액/종목배분 필드가 잠기고
+         이 상태값만 바꿀 수 있다(js: openScheduleModal 참고). -->
+    <div class="field-group" id="sc-status-group" hidden>
+      <label for="sc-status">상태</label>
+      <select id="sc-status">
+        <option value="ACTIVE">진행중</option>
+        <option value="PAUSED">일시중지</option>
+        <option value="COMPLETED">완료</option>
+        <option value="CANCELLED">취소</option>
+      </select>
+    </div>
 
     <div class="field-group">
       <label for="sc-title">제목</label>
