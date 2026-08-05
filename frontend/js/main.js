@@ -288,9 +288,29 @@ function bindEvents() {
   el.modalAddStock.addEventListener('click', (e) => { if (e.target === el.modalAddStock) el.modalAddStock.hidden = true; });
 }
 
+// v1.2(2026-08-05) -- 상단 헤더 투자 일정 배지. 실패해도(네트워크 오류 등) 화면
+// 진입 자체를 막지 않도록 조용히 무시한다(withdrawals 아이콘과 달리 이 배지는
+// 있어도 그만/없어도 그만인 보조 정보라 offline-snapshot 캐시 폴백도 쓰지 않음).
+async function refreshScheduleBadge() {
+  const badge = document.getElementById('schedule-badge');
+  if (!badge) return;
+  try {
+    const result = await api.getScheduleBadgeCount();
+    if (result.count > 0) {
+      badge.textContent = result.display;
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+  } catch (e) {
+    badge.hidden = true;
+  }
+}
+
 function init() {
   cacheDom();
   bindEvents();
+  refreshScheduleBadge();
 
   window.addEventListener('popstate', (e) => {
     const s = e.state;

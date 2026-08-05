@@ -115,3 +115,75 @@ class CompanyResolveKR(BaseModel):
 
 class CompanyAnalysisRun(BaseModel):
     company_id: str = Field(min_length=1)
+
+
+# backend/atrsite/api/schemas.py -- v1.2 통합 투자 스케줄(2026-08-05 추가).
+class PlanItemInput(BaseModel):
+    instrument_id: str = Field(min_length=1)
+    ratio_percent: float = Field(gt=0)
+
+
+class InvestmentPlanCreate(BaseModel):
+    name: str = Field(min_length=1)
+    deposit_account_id: Optional[str] = None
+    total_amount: Optional[float] = Field(default=None, ge=0)
+    currency: str = "KRW"
+    memo: Optional[str] = None
+    items: list[PlanItemInput] = Field(default_factory=list)
+
+
+class InvestmentPlanUpdate(BaseModel):
+    name: Optional[str] = None
+    deposit_account_id: Optional[str] = None
+    total_amount: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = None
+    status: Optional[str] = None
+    memo: Optional[str] = None
+
+
+class ScheduleItemInput(BaseModel):
+    instrument_id: str = Field(min_length=1)
+    ratio_percent: float = Field(gt=0)
+
+
+class InvestmentScheduleCreate(BaseModel):
+    plan_id: Optional[str] = None
+    schedule_type: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    market: str = "NONE"
+    recurrence_type: str = Field(min_length=1)
+    recurrence_interval: int = Field(default=1, ge=1)
+    start_date: str = Field(min_length=1)
+    end_date: Optional[str] = None
+    occurrence_count: Optional[int] = Field(default=None, ge=1)
+    custom_dates: Optional[list[str]] = None
+    holiday_policy: str = "NEXT_BUSINESS_DAY"
+    notify_days_before: int = Field(default=0, ge=0)
+    total_amount: Optional[float] = Field(default=None, ge=0)
+    currency: str = "KRW"
+    deposit_account_id: Optional[str] = None
+    memo: Optional[str] = None
+    items: list[ScheduleItemInput] = Field(default_factory=list)
+
+
+class InvestmentScheduleUpdate(BaseModel):
+    """반복 규칙/시작일/회차는 생성된 occurrence와 얽혀 있어 수정 대상에서 뺀다 --
+    바꾸고 싶으면 스케줄을 취소하고 새로 등록한다(스펙 취지: 예측 가능성 우선)."""
+    title: Optional[str] = None
+    holiday_policy: Optional[str] = None
+    status: Optional[str] = None
+    memo: Optional[str] = None
+
+
+class ScheduleOccurrenceUpdate(BaseModel):
+    status: Optional[str] = None
+    acknowledged: Optional[bool] = None
+
+
+class ScheduleExecutionCreate(BaseModel):
+    execution_type: str = Field(min_length=1)
+    linked_withdrawal_id: Optional[str] = None
+    linked_trade_id: Optional[str] = None
+    executed_amount: Optional[float] = Field(default=None, ge=0)
+    executed_at: Optional[str] = None
+    memo: Optional[str] = None

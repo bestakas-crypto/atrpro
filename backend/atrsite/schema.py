@@ -341,4 +341,155 @@ DDL_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_deposit_account_id ON cash_withdrawals(deposit_account_id)",
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_currency ON cash_withdrawals(currency)",
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_purpose ON cash_withdrawals(purpose)",
+
+    # ---- v1.2 -- 통합 투자 스케줄 및 예약알림 --------------------------------
+    # "계좌" 개념은 이 프로젝트에 별도 테이블이 없다 -- deposits가 사실상 유일한
+    # 계좌 엔티티(현금/예금 계좌)라서 cash_withdrawals와 동일하게
+    # deposit_account_id(FK, ON DELETE SET NULL) + account_name_snapshot 패턴을
+    # 그대로 재사용한다. instruments도 마찬가지로 삭제돼도 과거 일정 기록이
+    # 깨지지 않도록 instrument_name_snapshot을 둔다.
+    """
+    CREATE TABLE IF NOT EXISTS investment_plans (
+        id                     TEXT PRIMARY KEY,
+        name                   TEXT NOT NULL,
+        deposit_account_id     TEXT REFERENCES deposits(id) ON DELETE SET NULL,
+        account_name_snapshot  TEXT,
+        total_amount           REAL,
+        currency               TEXT NOT NULL DEFAULT 'KRW',
+        status                 TEXT NOT NULL DEFAULT 'ACTIVE',
+        memo                   TEXT,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS investment_plan_items (
+        id                         TEXT PRIMARY KEY,
+        plan_id                    TEXT NOT NULL REFERENCES investment_plans(id) ON DELETE CASCADE,
+        instrument_id              TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        instrument_name_snapshot   TEXT NOT NULL,
+        ratio_percent              REAL NOT NULL,
+        created_at                 TEXT NOT NULL,
+        updated_at                 TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS investment_schedules (
+        id                      TEXT PRIMARY KEY,
+        -- plan_id는 nullable -- RULE_REVIEW/MATURITY/GENERAL 같은 일정은 투자
+        -- 계획(plan) 없이도 단독으로 등록될 수 있다(스펙: 계좌 유형 불문 전체
+        -- 일정 관리).
+        plan_id                 TEXT REFERENCES investment_plans(id) ON DELETE CASCADE,
+        schedule_type           TEXT NOT NULL,
+        title                   TEXT NOT NULL,
+        market                  TEXT NOT NULL DEFAULT 'NONE',
+        recurrence_type         TEXT NOT NULL,
+        recurrence_interval     INTEGER NOT NULL DEFAULT 1,
+        start_date              TEXT NOT NULL,
+        end_date                TEXT,
+        occurrence_count        INTEGER,
+        holiday_policy          TEXT NOT NULL DEFAULT 'NEXT_BUSINESS_DAY',
+        -- 회차일 며칠 전에 텔레그램으로 미리 알릴지(0=당일만). 스펙: "예약알림".
+        notify_days_before      INTEGER NOT NULL DEFAULT 0,
+        total_amount            REAL,
+        currency                TEXT NOT NULL DEFAULT 'KRW',
+        deposit_account_id      TEXT REFERENCES deposits(id) ON DELETE SET NULL,
+        account_name_snapshot   TEXT,
+        status                  TEXT NOT NULL DEFAULT 'ACTIVE',
+        memo                    TEXT,
+        created_at              TEXT NOT NULL,
+        updated_at              TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS investment_schedule_items (
+        id                         TEXT PRIMARY KEY,
+        schedule_id                TEXT NOT NULL REFERENCES investment_schedules(id) ON DELETE CASCADE,
+        instrument_id               TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        instrument_name_snapshot    TEXT NOT NULL,
+        ratio_percent                REAL NOT NULL,
+        created_at                   TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS schedule_occurrences (
+        id                            TEXT PRIMARY KEY,
+        schedule_id                   TEXT NOT NULL REFERENCES investment_schedules(id) ON DELETE CASCADE,
+        occurrence_index               INTEGER NOT NULL,
+        -- 휴장일 보정 전/후 날짜를 모두 남긴다(스펙: original/adjusted 분리).
+        original_scheduled_date        TEXT NOT NULL,
+        adjusted_scheduled_date        TEXT NOT NULL,
+        -- KRX 외 시장은 검증된 휴장일 데이터가 없어 주말 보정만 하고 이 플래그를
+        -- 세운다 -- 절대 날짜를 추측해서 확정하지 않는다(스펙 7).
+        needs_holiday_confirmation     INTEGER NOT NULL DEFAULT 0,
+        planned_amount                  REAL,
+        currency                        TEXT NOT NULL DEFAULT 'KRW',
+        status                          TEXT NOT NULL DEFAULT 'SCHEDULED',
+        acknowledged                    INTEGER NOT NULL DEFAULT 0,
+        created_at                      TEXT NOT NULL,
+        updated_at                      TEXT NOT NULL,
+        UNIQUE(schedule_id, occurrence_index)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS schedule_occurrence_items (
+        id                          TEXT PRIMARY KEY,
+        occurrence_id               TEXT NOT NULL REFERENCES schedule_occurrences(id) ON DELETE CASCADE,
+        instrument_id                TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        instrument_name_snapshot     TEXT NOT NULL,
+        planned_amount                REAL NOT NULL,
+        created_at                     TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS schedule_executions (
+        -- 계획(planned) 대비 실행(actual)을 분리하는 명시적 실행 기록 --
+        -- 이 테이블 자체는 절대로 trades/cash_withdrawals/deposits를 대신 만들지
+        -- 않는다(스펙: 자동 매매/이체 금지). 사용자가 실제로 발생시킨 거래/출금을
+        -- 나중에 연결하거나(linked_*_id), 연결 없이 "완료 처리"만 기록한다.
+        id                    TEXT PRIMARY KEY,
+        occurrence_id          TEXT NOT NULL REFERENCES schedule_occurrences(id) ON DELETE CASCADE,
+        execution_type          TEXT NOT NULL,
+        linked_withdrawal_id      TEXT REFERENCES cash_withdrawals(id) ON DELETE SET NULL,
+        linked_trade_id           TEXT REFERENCES trades(id) ON DELETE SET NULL,
+        executed_amount            REAL,
+        executed_at                 TEXT NOT NULL,
+        memo                         TEXT,
+        created_at                    TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS schedule_notification_outbox (
+        -- notification_outbox(신호 알림 전용, signal_event_id NOT NULL FK)와는
+        -- 별개 테이블이다 -- 스키마가 signal_events 전용으로 이미 고정돼 있어
+        -- 재사용하면 FK 제약을 깨야 한다. 대신 상태 머신(PENDING/SENDING/SENT/
+        -- RETRY/FAILED)과 재시도 로직, telegram_client 발송 함수는 그대로
+        -- 재사용한다(notification_service.py의 패턴을 스케줄용으로 복제).
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurrence_id        TEXT NOT NULL REFERENCES schedule_occurrences(id) ON DELETE CASCADE,
+        notification_type     TEXT NOT NULL,
+        scheduled_date          TEXT NOT NULL,
+        channel                  TEXT NOT NULL DEFAULT 'telegram',
+        status                    TEXT NOT NULL DEFAULT 'PENDING',
+        payload                    TEXT NOT NULL,
+        attempt_count               INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at              TEXT,
+        created_at                    TEXT NOT NULL,
+        updated_at                     TEXT NOT NULL,
+        -- 스펙: schedule_id+notification_type+scheduled_date 조합으로 중복 발송
+        -- 방지(occurrence_id가 schedule_id+회차를 이미 유일하게 식별하므로
+        -- occurrence_id로 대체 -- 동일 의미, 조인 없이 바로 유니크 제약 가능).
+        UNIQUE(occurrence_id, notification_type, scheduled_date)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_investment_plan_items_plan_id ON investment_plan_items(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_schedules_plan_id ON investment_schedules(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_schedules_status ON investment_schedules(status)",
+    "CREATE INDEX IF NOT EXISTS idx_investment_schedule_items_schedule_id ON investment_schedule_items(schedule_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_occurrences_schedule_id ON schedule_occurrences(schedule_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_occurrences_adjusted_date ON schedule_occurrences(adjusted_scheduled_date)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_occurrences_status ON schedule_occurrences(status)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_occurrence_items_occurrence_id ON schedule_occurrence_items(occurrence_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_executions_occurrence_id ON schedule_executions(occurrence_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedule_notification_outbox_status ON schedule_notification_outbox(status, next_attempt_at)",
 ]

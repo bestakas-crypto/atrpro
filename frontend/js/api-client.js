@@ -79,6 +79,7 @@ export const api = {
   getDashboard: () => request('GET', '/api/v1/dashboard'),
   refreshAllQuotes: () => request('POST', '/api/v1/dashboard/refresh-quotes'),
 
+  listInstruments: () => request('GET', '/api/v1/instruments'),
   createInstrument: (body) => request('POST', '/api/v1/instruments', body),
   getInstrument: (id) => request('GET', `/api/v1/instruments/${id}`),
   updateInstrumentSettings: (id, body) => request('PATCH', `/api/v1/instruments/${id}`, body),
@@ -133,4 +134,24 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.blob();
   },
+
+  // js/api-client.js -- v1.2 통합 투자 스케줄 및 예약알림(2026-08-05 추가).
+  listInvestmentPlans: (status) => request('GET', `/api/v1/investment-plans${status ? `?status=${status}` : ''}`),
+  createInvestmentPlan: (body) => request('POST', '/api/v1/investment-plans', body),
+  getInvestmentPlan: (id) => request('GET', `/api/v1/investment-plans/${id}`),
+  updateInvestmentPlan: (id, body) => request('PATCH', `/api/v1/investment-plans/${id}`, body),
+  deleteInvestmentPlan: (id) => request('DELETE', `/api/v1/investment-plans/${id}`),
+
+  listInvestmentSchedules: (query) => request('GET', `/api/v1/investment-schedules?${new URLSearchParams(query || {}).toString()}`),
+  createInvestmentSchedule: (body) => request('POST', '/api/v1/investment-schedules', body),
+  getInvestmentSchedule: (id) => request('GET', `/api/v1/investment-schedules/${id}`),
+  updateInvestmentSchedule: (id, body) => request('PATCH', `/api/v1/investment-schedules/${id}`, body),
+  deleteInvestmentSchedule: (id) => request('DELETE', `/api/v1/investment-schedules/${id}`),
+
+  getTodayOccurrences: () => request('GET', '/api/v1/schedule-occurrences/today'),
+  getScheduleBadgeCount: () => request('GET', '/api/v1/schedule-occurrences/badge-count'),
+  listScheduleOccurrences: (query) => request('GET', `/api/v1/schedule-occurrences?${new URLSearchParams(query || {}).toString()}`),
+  getScheduleOccurrence: (id) => request('GET', `/api/v1/schedule-occurrences/${id}`),
+  updateScheduleOccurrence: (id, body) => request('PATCH', `/api/v1/schedule-occurrences/${id}`, body),
+  createScheduleExecution: (occurrenceId, body) => request('POST', `/api/v1/schedule-occurrences/${occurrenceId}/executions`, body),
 };

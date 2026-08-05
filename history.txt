@@ -1373,3 +1373,87 @@ Blob 다운로드(API 키 배포 환경 대응).
 전체 회귀: pytest 270개(기존 247 + 신규 23) 전부 통과, 기존 ATR/포지션/
 거래/예금/KIS/LLM 기능 전부 그대로 동작 확인. feature/cash-withdrawals를
 main에 병합 후 실서버 배포(사용자가 "묻지말고 자동으로 배포" 명시적 지시).
+
+[2026-08-05 -- v1.2: 통합 투자 스케줄 및 예약알림 기능]
+
+사용자가 22절짜리 상세 스펙으로 요청(BUY/SELL/DEPOSIT/WITHDRAWAL/REBALANCE/
+RULE_REVIEW/MATURITY/DIVIDEND_CHECK/INTEREST_CHECK/EXCHANGE/DISCLOSURE_CHECK/
+TAX_CHECK/GENERAL 12+1종 일정 유형, 반복 규칙, 시장별 휴장일 보정, 예산 배분,
+텔레그램 예약알림). "묻지말고 자동으로 실제서버에 배포하고, 커밋해줘" +
+"보고하지 말고 진행해. 최종 명령이야" 명시적 지시로 사전 보고 단계 없이
+feature/investment-scheduler 브랜치에서 조사->구현->테스트->배포까지 전
+과정을 자동 진행.
+
+**스펙과 실제 구조의 괴리 확인**: 이 프로젝트엔 "계좌" 전용 테이블이 없다
+-- deposits가 사실상 유일한 계좌 엔티티(현금/예금 계좌)라서, v1.1
+cash_withdrawals와 동일하게 deposit_account_id(FK ON DELETE SET NULL) +
+account_name_snapshot 패턴을 그대로 재사용했다. 기존 notification_outbox는
+signal_event_id NOT NULL FK로 신호 알림 전용으로 이미 고정돼 있어(스키마를
+깨지 않고는 재사용 불가), 상태 머신(PENDING/SENDING/SENT/RETRY/FAILED)과
+재시도 백오프·telegram_client 발송 함수만 그대로 재사용하고 별도
+schedule_notification_outbox 테이블을 새로 만들었다(idempotency는
+UNIQUE(occurrence_id, notification_type, scheduled_date)).
+
+**DB(신규 8테이블)**: investment_plans/investment_plan_items(계획+종목배분),
+investment_schedules/investment_schedule_items(반복 규칙+종목배분),
+schedule_occurrences/schedule_occurrence_items(실제 생성된 회차+회차별
+종목금액), schedule_executions(계획 대비 실제 실행 기록 -- trades/
+cash_withdrawals/deposits를 절대 자동 생성/수정하지 않고 링크만 하거나
+링크 없이 "완료 처리"만 남김), schedule_notification_outbox(예약알림
+발송 큐). investment_schedules.notify_days_before(기본 0)로 "며칠 전
+알림" 지원.
+
+**schedule_engine.py(순수함수, services/)**: generate_occurrence_dates
+(ONCE/DAILY/WEEKLY/BIWEEKLY/MONTHLY/YEARLY 날짜 확장, MONTHLY/YEARLY는
+말일 클리핑 처리, CUSTOM은 명시적 날짜 목록, occurrence_count/end_date
+둘 다 없으면 명시적으로 거부해 무한생성 방지 + MAX_OCCURRENCES=2000 안전
+장치), adjust_for_holiday(KRX는 기존 market_schedule.is_trading_day를
+그대로 재사용해 실거래 로직과 동일 근거 유지, NYSE_NASDAQ/JPX는 검증된
+휴장일 데이터가 이 프로젝트에 전혀 없어 주말만 보정하고 회차마다
+needs_confirmation=True를 무조건 세움 -- "확인 못 하면 날짜를 추측해서
+확정하지 않는다"는 스펙 원칙을 평일에도 지키기 위함), allocate_evenly/
+allocate_by_ratio(나머지는 항상 마지막 항목에 배분).
+
+**실제 ISA 사례로 검증**: 74,918,796원을 9회 주간 분할, 회차마다 TIGER
+KOFR금리액티브(449170)/KODEX iShares 미국하이일드액티브(468380) 50:50
+배분 -- 8회는 8,324,310원(회차별 4,162,155원씩), 마지막 1회만 나머지
+포함 8,324,316원(4,162,158원씩), 합계 74,918,796원 정확히 일치를 단위
+테스트+API 통합테스트+실제 브라우저 등록 흐름까지 3중으로 검증.
+
+**API**(/api/v1/investment-plans, /api/v1/investment-schedules,
+/api/v1/schedule-occurrences, 전부 API 키 인증): 계획/스케줄 CRUD(PATCH는
+반복규칙·시작일은 수정 대상에서 제외 -- 이미 생성된 회차와 얽혀 있어
+바꾸려면 취소 후 재등록), 스케줄을 CANCELLED로 바꾸면 아직 안 끝난
+(SCHEDULED/NOTIFIED) 회차도 함께 취소, GET .../today(오늘분+지연분),
+GET .../badge-count(SCHEDULED-도래분/NOTIFIED-미확인/PARTIALLY_EXECUTED/
+OVERDUE만 집계, COMPLETED/SKIPPED/CANCELLED/ARCHIVED/미래일정 제외,
+9+ 표시 캡), POST .../{id}/executions(실행 기록, 기존 cash_withdrawals/
+trades id를 검증 후 링크 가능).
+
+**텔레그램 예약알림**: schedule_notification_service.py가 매일 1회(시장
+상태와 무관 -- GENERAL/RULE_REVIEW 등은 휴장일에도 알림 필요) 오늘 알릴
+회차를 outbox에 적재(enqueue_due_notifications, UNIQUE 제약으로 중복
+적재 자체가 불가능해 진짜 멱등), 매 폴링 주기 발송(재시도 백오프는
+notification_service.py와 동일 정책 재사용: 30초/2분/10분). 발송 성공하면
+회차 상태를 자동으로 NOTIFIED로 전환. worker.py의 run_once()에 시장
+phase와 무관한 별도 흐름으로 통합.
+
+**프론트엔드**: withdrawals.html과 동일한 독립 페이지 패턴으로
+investment-schedule.html/css/js 신규 작성(오늘/지연 아젠다 위젯, 유형·
+상태·기간 필터, 카드형 목록, 일정 등록 모달 -- 반복유형에 따라 간격/
+종료방식 필드 동적 표시, 종목 배분 행 추가/삭제, 회차 상세 모달에서
+확인/완료/건너뜀/취소 처리). 상단 헤더에 📅 아이콘 + 배지(schedule-badge)
+추가, badge-count API로 채움. service-worker.js v15->v16.
+
+**테스트**: 백엔드 48개 신규(schedule_engine 순수함수 22개 -- 반복규칙
+확장/월말·윤년 클리핑/휴장일보정/예산배분/ISA 실사례, API 통합 17개 --
+CRUD/휴장일확인플래그/배지/오늘위젯/실행연결/ISA 전체 시나리오, 알림
+서비스 9개 -- 멱등성/재시도/실패전환/메시지포맷). 전체 회귀 318개
+(기존 270 + 신규 48) 전부 통과. 프론트엔드는 격리된 임시 uvicorn +
+SSH 터널(운영 DB/서비스 미접촉)로 ISA 9회 시나리오를 실제 브라우저에서
+등록->목록 확인(정확히 8,324,310원x8 + 8,324,316원 표시)->상세 모달
+(종목별 4,162,155원 표시)->완료 처리->지연 배지(1) 표시까지 전 과정
+실제 클릭/폼입력으로 검증, 콘솔 에러 없음 확인.
+
+feature/investment-scheduler를 main에 병합 후 실서버 배포(사용자가
+"묻지말고 자동으로 배포, 커밋" + "보고하지 말고 진행" 명시적 재확인).

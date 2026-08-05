@@ -31,6 +31,13 @@
        href="withdrawals.html" target="_blank" rel="noopener">
       <span aria-hidden="true">💸</span>
     </a>
+    <!-- v1.2(2026-08-05): 통합 투자 스케줄/예약알림. 배지는 badge-count API로
+         채우고, 표시할 게 없으면 hidden 유지(main.js refreshScheduleBadge 참고). -->
+    <a id="btn-open-schedules" class="icon-btn" aria-label="투자 일정" title="투자 일정"
+       href="investment-schedule.html" target="_blank" rel="noopener">
+      <span aria-hidden="true">📅</span>
+      <span id="schedule-badge" class="icon-badge" hidden></span>
+    </a>
   </div>
   <h1 id="header-title">ATRsite-pro</h1>
   <div class="header-actions">
