@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>투자 일정</title>
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/investment-schedule.css" />
+</head>
+<body>
+
+<div class="is-toolbar">
+  <button id="btn-close" class="btn btn-secondary" aria-label="닫기">← 닫기</button>
+  <span class="is-toolbar-title">투자 일정</span>
+  <button id="btn-add-schedule" class="btn btn-primary">+ 새 일정</button>
+</div>
+
+<main id="is-root">
+
+  <!-- 1. 오늘 확인할 것 -->
+  <section class="is-section">
+    <h2>오늘 확인할 일정</h2>
+    <div id="today-list" class="is-agenda"></div>
+    <p id="today-empty" class="is-empty" hidden>오늘 확인할 일정이 없습니다.</p>
+  </section>
+
+  <section class="is-section">
+    <h2>지난 미확인 일정 (지연됨)</h2>
+    <div id="overdue-list" class="is-agenda"></div>
+    <p id="overdue-empty" class="is-empty" hidden>지연된 일정이 없습니다.</p>
+  </section>
+
+  <!-- 2. 필터 -->
+  <section class="is-section">
+    <h2>전체 일정</h2>
+    <div class="is-filter-bar">
+      <div class="field-group">
+        <label for="filter-schedule-type">유형</label>
+        <select id="filter-schedule-type">
+          <option value="">전체</option>
+          <option value="BUY">매수</option>
+          <option value="SELL">매도</option>
+          <option value="DEPOSIT">입금</option>
+          <option value="WITHDRAWAL">출금</option>
+          <option value="REBALANCE">리밸런싱</option>
+          <option value="RULE_REVIEW">규칙 점검</option>
+          <option value="MATURITY">만기</option>
+          <option value="DIVIDEND_CHECK">배당 확인</option>
+          <option value="INTEREST_CHECK">이자 확인</option>
+          <option value="EXCHANGE">환전</option>
+          <option value="DISCLOSURE_CHECK">공시 확인</option>
+          <option value="TAX_CHECK">세금 확인</option>
+          <option value="GENERAL">일반</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="filter-status">상태</label>
+        <select id="filter-status">
+          <option value="">전체(진행중)</option>
+          <option value="SCHEDULED">예정</option>
+          <option value="NOTIFIED">알림됨</option>
+          <option value="PARTIALLY_EXECUTED">부분실행</option>
+          <option value="COMPLETED">완료</option>
+          <option value="SKIPPED">건너뜀</option>
+          <option value="CANCELLED">취소</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="filter-start-date">시작일</label>
+        <input id="filter-start-date" type="date" />
+      </div>
+      <div class="field-group">
+        <label for="filter-end-date">종료일</label>
+        <input id="filter-end-date" type="date" />
+      </div>
+      <div class="is-filter-actions">
+        <button id="btn-apply-filter" class="btn btn-primary btn-block">필터 적용</button>
+        <button id="btn-reset-filter" class="btn btn-secondary btn-block">초기화</button>
+      </div>
+    </div>
+
+    <div id="is-list" class="is-list"></div>
+    <p id="is-empty" class="is-empty" hidden>조건에 맞는 일정이 없습니다.</p>
+  </section>
+
+</main>
+
+<!-- 일정 등록 모달 -->
+<div id="modal-schedule" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3>새 투자 일정</h3>
+
+    <div class="field-group">
+      <label for="sc-title">제목</label>
+      <input id="sc-title" type="text" maxlength="100" placeholder="예: ISA 9회 분할매수" />
+    </div>
+    <div class="field-group">
+      <label for="sc-type">유형</label>
+      <select id="sc-type">
+        <option value="BUY">매수</option>
+        <option value="SELL">매도</option>
+        <option value="DEPOSIT">입금</option>
+        <option value="WITHDRAWAL">출금</option>
+        <option value="REBALANCE">리밸런싱</option>
+        <option value="RULE_REVIEW">규칙 점검</option>
+        <option value="MATURITY">만기</option>
+        <option value="DIVIDEND_CHECK">배당 확인</option>
+        <option value="INTEREST_CHECK">이자 확인</option>
+        <option value="EXCHANGE">환전</option>
+        <option value="DISCLOSURE_CHECK">공시 확인</option>
+        <option value="TAX_CHECK">세금 확인</option>
+        <option value="GENERAL">일반</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label for="sc-market">시장(휴장일 보정 기준)</label>
+      <select id="sc-market">
+        <option value="NONE">해당 없음(휴장일 보정 안 함)</option>
+        <option value="KRX">한국(KRX)</option>
+        <option value="NYSE_NASDAQ">미국(NYSE/NASDAQ)</option>
+        <option value="JPX">일본(JPX)</option>
+      </select>
+      <p class="is-hint">한국 외 시장은 검증된 휴장일 데이터가 없어 주말만 자동 보정되고,
+        회차마다 "휴장일 확인 필요" 표시가 붙습니다.</p>
+    </div>
+
+    <div class="field-group">
+      <label for="sc-recurrence-type">반복</label>
+      <select id="sc-recurrence-type">
+        <option value="ONCE">한 번만</option>
+        <option value="DAILY">매일</option>
+        <option value="WEEKLY">매주</option>
+        <option value="BIWEEKLY">격주</option>
+        <option value="MONTHLY">매월</option>
+        <option value="YEARLY">매년</option>
+      </select>
+    </div>
+    <div class="is-row" id="sc-interval-row" hidden>
+      <div class="field-group">
+        <label for="sc-interval">반복 간격</label>
+        <input id="sc-interval" type="number" min="1" step="1" value="1" />
+      </div>
+    </div>
+    <div class="field-group">
+      <label for="sc-start-date">시작일(1회차)</label>
+      <input id="sc-start-date" type="date" />
+    </div>
+    <div class="is-row" id="sc-end-mode-row" hidden>
+      <div class="field-group">
+        <label for="sc-end-mode">종료 방식</label>
+        <select id="sc-end-mode">
+          <option value="count">횟수 지정</option>
+          <option value="date">종료일 지정</option>
+        </select>
+      </div>
+      <div class="field-group" id="sc-occurrence-count-group">
+        <label for="sc-occurrence-count">총 회차</label>
+        <input id="sc-occurrence-count" type="number" min="1" step="1" value="1" />
+      </div>
+      <div class="field-group" id="sc-end-date-group" hidden>
+        <label for="sc-end-date">종료일</label>
+        <input id="sc-end-date" type="date" />
+      </div>
+    </div>
+    <div class="field-group">
+      <label for="sc-holiday-policy">휴장일 정책</label>
+      <select id="sc-holiday-policy">
+        <option value="NEXT_BUSINESS_DAY">다음 영업일로 이동</option>
+        <option value="PREVIOUS_BUSINESS_DAY">이전 영업일로 이동</option>
+        <option value="USER_CONFIRM">항상 사용자 확인</option>
+        <option value="NO_ADJUSTMENT">보정 안 함</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label for="sc-notify-days-before">며칠 전에 알림</label>
+      <input id="sc-notify-days-before" type="number" min="0" step="1" value="0" />
+    </div>
+
+    <div class="field-group">
+      <label for="sc-total-amount">총 금액(선택)</label>
+      <input id="sc-total-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="예: 74918796" />
+    </div>
+    <div class="field-group">
+      <label for="sc-currency">통화</label>
+      <select id="sc-currency">
+        <option value="KRW">KRW</option>
+        <option value="USD">USD</option>
+        <option value="JPY">JPY</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label for="sc-account">연결 계좌(선택)</label>
+      <select id="sc-account"><option value="">선택 안 함</option></select>
+    </div>
+
+    <div class="field-group">
+      <label>종목 배분(선택 -- 총 금액을 아래 비율대로 회차마다 나눕니다)</label>
+      <div id="sc-items"></div>
+      <button id="btn-add-item-row" type="button" class="btn btn-secondary btn-small">+ 종목 추가</button>
+    </div>
+
+    <div class="field-group">
+      <label for="sc-memo">메모(선택)</label>
+      <textarea id="sc-memo" maxlength="500"></textarea>
+    </div>
+
+    <div id="sc-preview" class="is-preview" hidden></div>
+
+    <div class="modal-actions">
+      <button id="btn-schedule-cancel" class="btn btn-secondary btn-block">취소</button>
+      <button id="btn-schedule-save" class="btn btn-primary btn-block">등록</button>
+    </div>
+  </div>
+</div>
+
+<!-- 회차 상세/처리 모달 -->
+<div id="modal-occurrence" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3 id="occ-modal-title">일정 상세</h3>
+    <div id="occ-detail" class="is-occ-detail"></div>
+    <div class="modal-actions" id="occ-actions"></div>
+    <div class="modal-actions">
+      <button id="btn-occ-close" class="btn btn-secondary btn-block">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="is-hint" hidden style="position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#14181f;color:#fff;padding:10px 16px;border-radius:8px;z-index:200;"></div>
+
+<script type="module" src="js/investment-schedule.js"></script>
+</body>
+</html>

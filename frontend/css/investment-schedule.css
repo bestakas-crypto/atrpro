@@ -1,0 +1,160 @@
+/* frontend/css/investment-schedule.css -- v1.2 투자 일정 전용 스타일.
+   withdrawals.css와 같은 독립 페이지 패턴/색상 토큰을 그대로 따른다(하드코딩,
+   :root 변수 미사용). 모바일 세로 화면 우선 설계. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: #14181f;
+  background: #f2f3f5;
+  min-height: 100vh;
+}
+
+.is-toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d5d9e0;
+  z-index: 10;
+}
+.is-toolbar-title { font-size: 15px; font-weight: 700; margin-right: auto; }
+
+.btn {
+  padding: 10px 16px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #d5d9e0;
+  background: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  color: #14181f;
+}
+.btn-primary { background: #14181f; color: #fff; border-color: #14181f; }
+.btn-secondary { background: #ffffff; }
+.btn-danger { background: #fdecec; color: #cf3a3a; border-color: #f3b9b9; }
+.btn-block { width: 100%; }
+.btn-small { padding: 6px 10px; min-height: 32px; font-size: 12px; }
+.btn:disabled { opacity: .5; cursor: default; }
+
+#is-root { max-width: 720px; margin: 0 auto; padding: 12px 12px 40px; }
+
+.is-section { margin-bottom: 20px; }
+.is-section h2 { font-size: 14px; margin: 0 0 8px; color: #4d5561; }
+
+.is-empty { text-align: center; color: #838b99; font-size: 13px; padding: 16px 0; }
+
+/* 오늘/지연 위젯 -- 카드형 아젠다 */
+.is-agenda { display: flex; flex-direction: column; gap: 8px; }
+.is-agenda-card {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-left: 4px solid #0e8a73;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.is-agenda-card.overdue { border-left-color: #cf3a3a; }
+.is-agenda-card .row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.is-agenda-card .title { font-size: 14px; font-weight: 600; }
+.is-agenda-card .date { font-size: 12px; color: #838b99; }
+.is-agenda-card .meta { margin-top: 4px; font-size: 12px; color: #4d5561; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+
+/* 유형 배지 */
+.is-type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #4d5561;
+  font-size: 11px;
+}
+.is-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.is-status-SCHEDULED { background: #eef1f5; color: #4d5561; }
+.is-status-NOTIFIED { background: #fff4de; color: #a06a0a; }
+.is-status-PARTIALLY_EXECUTED { background: #e6f3ff; color: #1a6fc4; }
+.is-status-COMPLETED { background: #e8f7ef; color: #0e8a73; }
+.is-status-SKIPPED, .is-status-CANCELLED { background: #f2f3f5; color: #9098a3; }
+.is-status-OVERDUE { background: #fdecec; color: #cf3a3a; }
+
+.is-holiday-warn { color: #cf3a3a; font-size: 11px; }
+
+/* 필터 */
+.is-filter-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.is-filter-bar .field-group { display: flex; flex-direction: column; gap: 4px; }
+.is-filter-bar label { font-size: 11px; color: #838b99; }
+.is-filter-bar input, .is-filter-bar select {
+  padding: 8px 10px; min-height: 40px; border: 1px solid #d5d9e0; border-radius: 8px; font-size: 13px;
+}
+.is-filter-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+
+/* 목록 */
+.is-list { display: flex; flex-direction: column; gap: 8px; }
+.is-card {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: hidden;
+  cursor: pointer;
+}
+.is-card .row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.is-card .title { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: break-word; }
+.is-card .amount { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; font-weight: 700; color: #14181f; white-space: nowrap; }
+.is-card .meta { margin-top: 6px; font-size: 12px; color: #838b99; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+
+/* 모달 공통(withdrawals.css와 동일 패턴) */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .6);
+  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px;
+}
+.modal-overlay[hidden] { display: none; }
+.modal-box {
+  background: #fff; border-radius: 12px; padding: 18px; max-width: 460px; width: 100%;
+  max-height: 88vh; overflow-y: auto;
+}
+.modal-box h3 { margin: 0 0 14px; font-size: 15px; }
+.field-group { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+.field-group label { font-size: 12px; color: #4d5561; }
+.field-group input, .field-group select, .field-group textarea {
+  padding: 10px 12px; min-height: 44px; border: 1px solid #d5d9e0; border-radius: 8px;
+  font-size: 14px; font-family: inherit;
+}
+.field-group textarea { min-height: 64px; resize: vertical; }
+.is-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.is-hint { font-size: 11px; color: #838b99; margin: 2px 0 0; }
+.modal-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+/* 종목 배분 입력 행 */
+.is-item-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.is-item-row select { flex: 1; padding: 8px; min-height: 40px; border: 1px solid #d5d9e0; border-radius: 8px; }
+.is-item-row input { width: 80px; padding: 8px; min-height: 40px; border: 1px solid #d5d9e0; border-radius: 8px; }
+.is-item-row button { flex-shrink: 0; }
+
+.is-preview {
+  background: #f7f8fa; border: 1px solid #e4e7ec; border-radius: 8px; padding: 10px 12px;
+  font-size: 12px; color: #4d5561; margin-bottom: 12px; white-space: pre-wrap;
+}
+
+.is-occ-detail { font-size: 13px; line-height: 1.7; }
+.is-occ-detail dt { color: #838b99; }
+.is-occ-detail dd { margin: 0 0 6px; }
+
+.is-hint { font-size: 12px; color: #838b99; }
+
+@media (max-width: 380px) {
+  .is-filter-bar { grid-template-columns: 1fr; }
+  .is-row { grid-template-columns: 1fr; }
+}

@@ -22,6 +22,7 @@ from .api.deposits import router as deposits_router
 from .api.health import router as health_router
 from .api.instruments import router as instruments_router
 from .api.legacy import router as legacy_router
+from .api.schedules import occurrences_router, plans_router, schedules_router
 from .api.trades import router as trades_router
 from .api.withdrawals import router as withdrawals_router
 from .config import settings
@@ -56,6 +57,9 @@ def create_app() -> FastAPI:
     app.include_router(trades_router)
     app.include_router(deposits_router)
     app.include_router(withdrawals_router)
+    app.include_router(plans_router)
+    app.include_router(schedules_router)
+    app.include_router(occurrences_router)
     app.include_router(legacy_router)
     app.include_router(analysis_router)
     app.include_router(company_router)

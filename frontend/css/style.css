@@ -104,6 +104,7 @@ input[type="number"] {
 .icon-btn {
   /* v1.1(2026-08-05): 44x44px 이상 터치 영역 요구사항(스펙 2.2) -- 상단 헤더의
      모든 아이콘 버튼(보고서/종목탐구/브리핑/출금기록)에 공통 적용돼 통일됨. */
+  position: relative;
   min-width: 44px;
   min-height: 44px;
   background: transparent;
@@ -117,6 +118,29 @@ input[type="number"] {
   align-items: center;
   justify-content: center;
   text-decoration: none;
+}
+
+/* v1.2(2026-08-05) -- 투자 일정 배지(schedule-badge). SCHEDULED(도래)/
+   NOTIFIED-미확인/PARTIALLY_EXECUTED/OVERDUE 건수만 표시(리포지토리 badge_count
+   로직 참고). */
+.icon-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e0424a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.icon-badge[hidden] {
+  display: none;
 }
 
 .icon-btn:active {

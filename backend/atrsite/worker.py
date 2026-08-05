@@ -23,7 +23,7 @@ from . import db
 from .adapters.kis_client import KisApiError, get_client
 from .repositories import instruments as instruments_repo
 from .repositories import market_data as market_data_repo
-from .services import notification_service, portfolio_service
+from .services import notification_service, portfolio_service, schedule_notification_service
 from .services.atr_engine import InsufficientDataError, latest_atr
 from .services.market_schedule import MarketPhase, decide_polling
 
@@ -96,10 +96,15 @@ def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
 # POST_MARKET) 자동으로 다시 수집하도록 날짜만 기억한다.
 _last_daily_bars_collection_date: date | None = None
 
+# v1.2 예약알림 -- 하루 1번만 "오늘 알릴 회차"를 훑어 outbox에 적재하면 충분하다
+# (KRX 시장 상태와 무관하게 매일 돌아야 함 -- GENERAL/RULE_REVIEW 등은 휴장일에도
+# 알림이 필요할 수 있음). 실제 발송(process_outbox)은 멱등하므로 매 폴링마다 돈다.
+_last_schedule_notification_enqueue_date: date | None = None
+
 
 def run_once(now: datetime | None = None) -> MarketPhase:
     """폴링 결정 1회 실행 -- 테스트와 `--once` 모드가 공유하는 진입점."""
-    global _last_daily_bars_collection_date
+    global _last_daily_bars_collection_date, _last_schedule_notification_enqueue_date
     now = now or datetime.now()
     decision = decide_polling(now)
     logger.info("phase=%s reason=%s", decision.phase.value, decision.reason)
@@ -121,6 +126,19 @@ def run_once(now: datetime | None = None) -> MarketPhase:
         conn.commit()
         if outbox_result["sent"] or outbox_result["retried"] or outbox_result["failed"]:
             logger.info("outbox: sent=%s retried=%s failed=%s", *outbox_result.values())
+
+        # v1.2 예약알림 -- 시장 상태(phase)와 무관하게 매일 1회 적재, 매 주기 발송.
+        if _last_schedule_notification_enqueue_date != now.date():
+            enqueued = schedule_notification_service.enqueue_due_notifications(conn, today=now.date())
+            conn.commit()
+            _last_schedule_notification_enqueue_date = now.date()
+            if enqueued:
+                logger.info("schedule notification enqueued: %s건", enqueued)
+
+        schedule_outbox_result = schedule_notification_service.process_outbox(conn)
+        conn.commit()
+        if schedule_outbox_result["sent"] or schedule_outbox_result["retried"] or schedule_outbox_result["failed"]:
+            logger.info("schedule outbox: sent=%s retried=%s failed=%s", *schedule_outbox_result.values())
     except Exception:
         conn.rollback()
         raise
