@@ -420,3 +420,146 @@ def test_refresh_all_quotes_now_keeps_old_rate_when_fx_fetch_fails(db_conn, forc
     rates = fx_repo.list_rates(db_conn)
     assert rates["USD"]["rate_to_krw"] == pytest.approx(1300.0)  # 실패해도 기존 값 그대로
     assert rates["USD"]["source"] == "manual"  # source도 안 바뀜
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-06 실전 버그 회귀 테스트 -- STALE/API_ERROR 중에도 기존 트리거 상태가
+# 사라지면 안 된다(GPT 코드리뷰로 발견, 실전 재현됨). 데이터 정상 복귀까지 포함.
+# ---------------------------------------------------------------------------
+
+def _setup_stop_triggered(conn):
+    """trailing_stop_price=90(익절가는 100+10*1.5=115라 90~115 구간이 "관망")으로
+    세팅하고, 현재가 70(KIS 소스, FRESH)으로 STOP_TRIGGERED를 실제 발생시킨다.
+
+    매수 체결(record_trade) 자체도 내부적으로 recompute_signal()을 한 번
+    호출해서 "포지션 없음 -> 관망(NEUTRAL)" 이벤트가 하나 먼저 생긴다 -- 이건
+    이번 버그 수정과 무관한 기존 동작이라, 이 시점의 실제 이벤트 개수를
+    baseline으로 반환해서 테스트가 매직넘버 대신 이 값과 비교하게 한다."""
+    from atrsite.repositories import signals as signals_repo
+
+    inst = _make_instrument(conn)
+    portfolio_service.record_trade(conn, inst["id"], trade_type="buy", price=100, quantity=10, executed_at="2026-01-01T09:00:00")
+    portfolio_service.commit_manual_atr(conn, inst["id"], atr=10, trade_date="2026-01-01")
+    instruments_repo.update_manual_fields(conn, inst["id"], trailing_stop_price=90)
+
+    portfolio_service.commit_quote(conn, inst["id"], price=70, source="kis", data_status="FRESH")
+
+    signal = signals_repo.get_signal_state(conn, inst["id"])
+    assert signal["status"] == "STOP_TRIGGERED"
+    baseline_event_count = len(signals_repo.list_signal_events(conn, inst["id"]))
+    return inst, signal, baseline_event_count
+
+
+def test_stale_data_preserves_stop_triggered_status_and_acknowledged_state(db_conn):
+    from atrsite.repositories import notifications as notifications_repo
+    from atrsite.repositories import signals as signals_repo
+    from datetime import datetime, timedelta, timezone as tz
+
+    inst, signal, baseline_events = _setup_stop_triggered(db_conn)
+    original_event_id = signal["latest_event_id"]
+    assert original_event_id is not None
+    assert len(notifications_repo.list_pending(db_conn)) == 1  # STOP_TRIGGERED만 알림 대상
+
+    portfolio_service.acknowledge_signal(db_conn, inst["id"])
+    acked = signals_repo.get_signal_state(db_conn, inst["id"])
+    assert acked["acknowledged_event_id"] == original_event_id
+
+    # 시세가 20분 전 값으로 굳어짐(KIS 장애/지연 시뮬레이션) -> STALE 전환.
+    old_ts = (datetime.now(tz.utc) - timedelta(minutes=20)).isoformat()
+    portfolio_service.commit_quote(
+        db_conn, inst["id"], price=70, source="kis", data_status="FRESH", quoted_at=old_ts,
+    )
+    stale_signal = signals_repo.get_signal_state(db_conn, inst["id"])
+
+    # data_status만 바뀌고 나머지는 전부 그대로 보존돼야 한다.
+    assert stale_signal["data_status"] == "STALE"
+    assert stale_signal["status"] == "STOP_TRIGGERED"  # <- 이게 이번 수정의 핵심
+    assert stale_signal["latest_event_id"] == original_event_id
+    assert stale_signal["acknowledged_event_id"] == original_event_id  # 확인 상태도 유지
+    assert stale_signal["trailing_stop_price"] == pytest.approx(90)
+
+    # 새 이벤트도 중복 알림도 생기면 안 된다.
+    assert len(signals_repo.list_signal_events(db_conn, inst["id"])) == baseline_events
+    assert len(notifications_repo.list_pending(db_conn)) == 1
+
+
+def test_data_recovery_with_unchanged_condition_stays_acknowledged(db_conn):
+    """장애 중 상태가 보존된 뒤, 데이터가 정상 복귀했는데 조건(가격<=손절선)이
+    그대로면 -- 같은 상태로 재판정되고 확인 상태도 계속 유지돼야 한다(새
+    이벤트/알림 없음)."""
+    from atrsite.repositories import notifications as notifications_repo
+    from atrsite.repositories import signals as signals_repo
+    from datetime import datetime, timedelta, timezone as tz
+
+    inst, signal, baseline_events = _setup_stop_triggered(db_conn)
+    original_event_id = signal["latest_event_id"]
+    portfolio_service.acknowledge_signal(db_conn, inst["id"])
+
+    old_ts = (datetime.now(tz.utc) - timedelta(minutes=20)).isoformat()
+    portfolio_service.commit_quote(db_conn, inst["id"], price=70, source="kis", data_status="FRESH", quoted_at=old_ts)
+
+    # 데이터 정상 복귀 -- 가격은 그대로 70(여전히 손절선 90 아래).
+    portfolio_service.commit_quote(db_conn, inst["id"], price=70, source="kis", data_status="FRESH")
+    recovered_signal = signals_repo.get_signal_state(db_conn, inst["id"])
+
+    assert recovered_signal["data_status"] == "FRESH"
+    assert recovered_signal["status"] == "STOP_TRIGGERED"
+    assert recovered_signal["latest_event_id"] == original_event_id  # 새 이벤트 아님
+    assert recovered_signal["acknowledged_event_id"] == original_event_id  # 계속 확인된 상태
+    assert len(signals_repo.list_signal_events(db_conn, inst["id"])) == baseline_events
+    assert len(notifications_repo.list_pending(db_conn)) == 1
+
+
+def test_data_recovery_with_changed_condition_clears_signal(db_conn):
+    """장애 중엔 상태가 보존되지만, 데이터가 정상 복귀했을 때 실제로 가격이
+    손절선(90) 위 + 익절가(115) 아래인 "관망" 구간으로 돌아와 있으면 정상적으로
+    풀려야 한다 -- 장애 보존 로직이 신호를 "영구 고정"시키는 게 아님을 확인."""
+    from atrsite.repositories import signals as signals_repo
+    from datetime import datetime, timedelta, timezone as tz
+
+    inst, signal, _baseline_events = _setup_stop_triggered(db_conn)
+
+    old_ts = (datetime.now(tz.utc) - timedelta(minutes=20)).isoformat()
+    portfolio_service.commit_quote(db_conn, inst["id"], price=70, source="kis", data_status="FRESH", quoted_at=old_ts)
+
+    # 데이터 정상 복귀 + 가격이 90~115 관망 구간(100)으로 회복 -> 손절 해제돼야 함.
+    portfolio_service.commit_quote(db_conn, inst["id"], price=100, source="kis", data_status="FRESH")
+    recovered_signal = signals_repo.get_signal_state(db_conn, inst["id"])
+
+    assert recovered_signal["data_status"] == "FRESH"
+    assert recovered_signal["status"] == "NEUTRAL"
+
+
+def test_api_error_status_also_preserves_existing_signal(db_conn):
+    """연속 3회 조회 실패(API_ERROR)도 STALE과 동일하게 기존 신호를 보존해야 한다."""
+    from atrsite.repositories import signals as signals_repo
+
+    inst, signal, _baseline_events = _setup_stop_triggered(db_conn)
+    original_event_id = signal["latest_event_id"]
+
+    for _ in range(3):
+        market_data_repo.record_quote_failure(db_conn, inst["id"])
+    portfolio_service.recompute_signal(db_conn, inst["id"])
+
+    api_error_signal = signals_repo.get_signal_state(db_conn, inst["id"])
+    assert api_error_signal["data_status"] == "API_ERROR"
+    assert api_error_signal["status"] == "STOP_TRIGGERED"
+    assert api_error_signal["latest_event_id"] == original_event_id
+
+
+def test_blocked_data_on_first_ever_computation_creates_safe_initial_state(db_conn):
+    """이 종목에 signal_state 행이 아예 없던 첫 계산이 하필 데이터 장애 상태로
+    시작해도(예: 등록 직후 시세가 아직 없음) 크래시 없이 안전한 초기값(관망/
+    미보유)을 만들어야 한다 -- "보존할 기존 상태가 없는" 경계 케이스."""
+    from atrsite.repositories import signals as signals_repo
+
+    inst = _make_instrument(db_conn)
+    # 시세를 한 번도 커밋하지 않음 -> quote is None -> INSUFFICIENT_DATA, 그리고
+    # signal_state 행 자체가 아직 없는 상태에서 recompute_signal을 직접 호출.
+    result = portfolio_service.recompute_signal(db_conn, inst["id"])
+    assert result["data_status"] == "INSUFFICIENT_DATA"
+    assert result["status"] == "NO_POSITION"
+
+    stored = signals_repo.get_signal_state(db_conn, inst["id"])
+    assert stored is not None
+    assert stored["status"] == "NO_POSITION"

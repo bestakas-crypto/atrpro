@@ -10,6 +10,17 @@ import { api } from './api-client.js';
 
 let pendingPayload = null;
 
+// 2026-08-06 XSS 수정 -- report.errors[].path/message, .warnings[].path/message는
+// 업로드한 JSON 파일 내용을 기반으로 서버가 만든 문자열이라 사용자(또는 악의적으로
+// 조작한 파일)가 사실상 원하는 값을 넣을 수 있다. renderReport()가 이걸 그대로
+// innerHTML에 꽂고 있었던 걸 이스케이프하도록 고친다(withdrawals.js의
+// escapeText()와 동일한 DOM 기반 이스케이프 트릭).
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s == null ? '' : String(s);
+  return div.innerHTML;
+}
+
 export function openImportModal(ctx) {
   const { el } = ctx;
   pendingPayload = null;
@@ -31,12 +42,12 @@ function renderReport(el, report) {
   parts.push(`<p>종목 ${report.summary.instruments}개 · 거래 ${report.summary.trades}건 · 예금 ${report.summary.deposits}건</p>`);
   if (report.errors.length > 0) {
     parts.push('<p class="import-error"><strong>오류 (가져오기 불가)</strong></p><ul>');
-    report.errors.forEach((e) => parts.push(`<li class="import-error">[${e.path}] ${e.message}</li>`));
+    report.errors.forEach((e) => parts.push(`<li class="import-error">[${escapeHtml(e.path)}] ${escapeHtml(e.message)}</li>`));
     parts.push('</ul>');
   }
   if (report.warnings.length > 0) {
     parts.push('<p><strong>참고 (진행은 가능)</strong></p><ul>');
-    report.warnings.forEach((w) => parts.push(`<li>[${w.path}] ${w.message}</li>`));
+    report.warnings.forEach((w) => parts.push(`<li>[${escapeHtml(w.path)}] ${escapeHtml(w.message)}</li>`));
     parts.push('</ul>');
   }
   el.importReport.innerHTML = parts.join('');

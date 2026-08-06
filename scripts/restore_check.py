@@ -26,9 +26,30 @@ sys.path.insert(0, str(BACKEND_DIR))
 from atrsite.config import settings  # noqa: E402
 from atrsite.repositories import instruments as instruments_repo  # noqa: E402
 
+# 2026-08-06 -- v1.0 이후 추가된 기능(종목탐구/출금기록/투자일정/자산스냅샷)의
+# 핵심 테이블이 여태 빠져 있던 걸 GPT 코드리뷰로 발견해서 전부 채워 넣었다.
+# daily_bars/atr_values/quote_latest/strategy_settings/audit_log/sync_runs/
+# app_settings/schema_meta는 의도적으로 계속 제외한다 -- 사용자가 직접 입력한
+# "원본 데이터"가 아니라 KIS에서 재조회 가능한 캐시/파생 데이터이거나 순수
+# 운영 로그라서, 복구 여부보다 무결성(PRAGMA integrity_check)만 통과하면 충분.
 CORE_TABLES = [
+    # v1.0 -- ATR 매매신호 핵심
     "instruments", "trades", "position_state", "deposits",
     "signal_state", "signal_events", "notification_outbox", "fx_rates",
+    # v1.0 -- LLM 매크로 브리핑 + 종목탐구
+    "analysis_results",
+    "companies", "company_identifiers", "company_filings",
+    "company_financial_periods", "company_financial_metrics",
+    "company_analysis_requests", "company_analysis_results",
+    # v1.1 -- 현금 출금기록
+    "cash_withdrawals",
+    # v1.2 -- 통합 투자 스케줄 및 예약알림
+    "investment_plans", "investment_plan_items",
+    "investment_schedules", "investment_schedule_items",
+    "schedule_occurrences", "schedule_occurrence_items",
+    "schedule_executions", "schedule_notification_outbox",
+    # v1.3 -- 일별 총자산/손익 스냅샷
+    "portfolio_daily_snapshots", "portfolio_snapshot_items",
 ]
 
 

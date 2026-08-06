@@ -1616,3 +1616,85 @@ USD 1423.72/JPY 9.0343을 정확히 받아와 source="auto"로 저장되는 것�
 
 main에 직접 커밋 후 실서버 배포(이 세션 내 계속되는 "로컬 완료 후 자동 배포"
 지시를 그대로 적용).
+
+--------------------------------------------------------------------
+[GPT 코드 점검 보고서 대조 검증 + 채택 4건 수정 (신호소실/XSS/restore_check/lock)]
+(2026-08-06)
+--------------------------------------------------------------------
+
+사용자가 GPT가 작성한 코드 점검 보고서(커밋 7838222 기준, [중요1][중요2]
+[중간1-5][낮은위험] 항목 다수)를 붙여넣고 "불가능한건 불가능하다고, 불필요한건
+불필요하다고, 채택할만건 채택해"라고 지시. GPT는 실제 코드를 볼 수 없으므로
+항목 전부를 실제 소스와 직접 대조해서 검증한 뒤 진짜인 것만 채택:
+
+- 허위경보/이미 해결됨으로 판단한 것: (여기 항목은 채택 목록 밖이라 생략,
+  보고서 대조 과정에서 코드로 직접 확인)
+- 채택 4건(사용자가 "1~4번을 제안한 순서대로 진행"이라고 승인):
+
+1) [중요1] 신호 소실 버그 -- data_status가 STALE/API_ERROR/INSUFFICIENT_DATA로
+   막히면 signal_engine.determine_signal()이 항상 NEUTRAL/NO_POSITION을
+   반환하도록 설계돼 있는데(오래된 데이터로 새 신호를 내지 않으려는 의도적
+   설계), portfolio_service.recompute_signal()이 이 값을 무조건
+   signal_state.status에 덮어써서 -- 예를 들어 이미 떠 있던 STOP_TRIGGERED
+   경고가 시세 조회 한 번 실패하는 순간 조용히 사라져 버리는 실제 결함이었음
+   (코드 직접 추적으로 확인, 허위경보 아님).
+   수정: recompute_signal()에 조기 분기 추가 -- previous가 존재하고
+   data_status가 막힌 상태면 signal_events/notification_outbox는 전혀
+   건드리지 않고(새 이벤트/중복 텔레그램 알림 없음), repositories/signals.py에
+   새로 만든 update_data_status_only()로 data_status/next_buy_price/
+   take_profit_price/trailing_stop_price/computed_at만 갱신. status/reason/
+   latest_event_id/acknowledged_event_id(확인 상태)는 완전히 그대로 유지.
+   신규 종목의 최초 계산(previous가 없는 경우)은 이 분기를 타지 않고 기존
+   경로 그대로(어차피 안전한 초기값이 나옴).
+   회귀 테스트 5개 추가: STALE 발생 시 STOP_TRIGGERED 유지+확인상태 유지,
+   API_ERROR도 동일하게 보존, 데이터 정상 복귀 후 조건 불변이면 계속 유지,
+   조건이 실제로 바뀌면(가격이 관망 구간으로) 정상적으로 해제, 신규 종목
+   최초 계산은 안전하게 초기화.
+
+2) [중간2] XSS -- withdrawals.js/legacy-export.js에서 서버 응답 필드를
+   innerHTML에 그대로 삽입하는 곳 발견(둘 다 실제 결함). 지시대로 "확인된
+   두 곳과 같은 파일의 사용자 입력 innerHTML"을 전수점검한 결과, GPT가
+   못 짚은 세 번째 지점을 발견 -- withdrawals.js는 account_name_snapshot을
+   카드 메타/삭제확인 모달 두 곳에서는 이미 자체 escapeText()로 이스케이프
+   하고 있었는데, 계좌별 요약(account-breakdown) 렌더링 한 곳만 빠져있던
+   불일치 버그였음(헬퍼 자체가 없던 게 아니라 적용이 일관되지 않았던 것).
+   legacy-export.js는 이런 헬퍼가 아예 없어서 escapeHtml() 신규 작성 후
+   에러/경고 목록의 path/message 필드에 적용.
+   VPS 격리 미리보기로 실제 <img src=x onerror=alert(1)> 페이로드를 예금
+   계좌명으로 넣어 브라우저에서 직접 검증 -- 이스케이프된 텍스트로만
+   렌더링되고 alert 실행 안 됨 확인.
+
+3) [중간4] scripts/restore_check.py의 CORE_TABLES -- v1.0 초기 8개 테이블
+   에서 갱신된 적이 없어서 v1.0 후반(company_explorer)과 v1.1~v1.3에서
+   추가된 테이블(cash_withdrawals/investment_schedules/schedule_occurrences/
+   portfolio_daily_snapshots/portfolio_snapshot_items/analysis_results/
+   companies/company_* 등)이 전부 빠져 있었음 -- 실제 재해복구 상황에서
+   대부분의 최신 데이터가 복구됐는지 검증조차 안 되는 상태였음. 지시대로
+   analysis_results/company_*/v1.1~v1.3 전체 테이블까지 포함해서 8개 ->
+   29개로 확장(버전별 주석 포함, daily_bars/atr_values/quote_latest 등은
+   의도적으로 제외한 이유도 주석에 명시). 새 테스트 파일
+   tests/test_restore_check.py 3개 추가(실제 스키마와 대조, 버전별 핵심
+   테이블 누락 가드, 중복 없음).
+
+4) [낮은위험] requirements.txt/requirements-dev.txt는 직접 의존성만 고정
+   (각 5개/6개)하고 starlette/httpcore/anyio 같은 간접 의존성은 설치
+   시점마다 달라질 수 있었음. RackNerd VPS에서 완전히 새로 만든 클린
+   Python 3.12.3 venv 두 개(운영용은 requirements.txt만, 개발용은
+   requirements-dev.txt까지)에 각각 설치해서 나온 전체 트리를 pip freeze로
+   그대로 고정 -- requirements-lock.txt(22개)/requirements-dev-lock.txt
+   (26개, pytest 등 개발용만 추가로 포함) 신규 생성. 운영 lock에 pytest 같은
+   개발 전용 패키지가 섞이지 않도록 두 venv를 처음부터 분리해서 만듦.
+   DEPLOY.md 3절에 재해복구/신규설치 시 lock 파일 사용법 추가(기존 8절
+   "일상 재배포" 절차는 그대로 유지, loose requirements.txt 계속 사용).
+
+테스트 작성 중 발견한 내 실수 3건(전부 테스트 코드 문제, 실제 결함 아님) --
+record_trade()가 매수 시점에 이미 신호를 1회 계산해서 이벤트 개수 기준값이
+1이 아니라 2였던 것/회복 시나리오의 "회복 가격"이 우연히 다른 임계값(익절선)
+을 건드려서 기대값이 틀렸던 것/헬퍼 반환값 튜플 크기 변경 후 호출부 갱신
+누락 -- 전부 수정 후 재실행.
+
+frontend/js/legacy-export.js, frontend/js/withdrawals.js 변경으로
+service-worker.js CACHE_NAME v18->v19.
+
+전체 회귀 373개 통과(기존 365개 + 이번 신규 8개: 신호소실 5개 + restore_check
+3개). main에 직접 커밋 후 실서버 배포.

@@ -60,6 +60,43 @@ def upsert_signal_state(
     return get_signal_state(conn, instrument_id)  # type: ignore[return-value]
 
 
+def update_data_status_only(
+    conn: sqlite3.Connection,
+    instrument_id: str,
+    *,
+    data_status: str,
+    next_buy_price: float | None,
+    take_profit_price: float | None,
+    trailing_stop_price: float | None,
+) -> dict[str, Any] | None:
+    """데이터 장애(STALE/API_ERROR/INSUFFICIENT_DATA) 중에만 쓰는 부분 갱신.
+
+    2026-08-06 실전 버그 수정: 기존엔 upsert_signal_state()를 그대로 써서
+    status/reason/latest_event_id까지 전부 새 계산값(항상 NEUTRAL/NO_POSITION,
+    signal_engine.determine_signal()이 데이터 장애 중엔 그렇게만 반환하므로)으로
+    덮어썼다 -- 그 결과 손절/익절 경고가 떠 있다가 KIS 장애나 시세 지연이
+    겹치면 화면에서 조용히 사라지는 사고가 실제로 재현됐다(GPT 코드리뷰 계기로
+    발견). 이 함수는 status/reason/latest_event_id/acknowledged_event_id를
+    전혀 건드리지 않고 data_status와 가격 무관 기준선(ATR/마지막매수가/최고가
+    기반이라 시세 신선도와 무관하게 항상 재계산 가능)만 갱신한다.
+
+    이미 signal_state 행이 있는 종목에만 쓴다 -- 없으면(최초 계산) status 등
+    필수 컬럼을 채울 값이 없으므로 호출자가 일반 경로(upsert_signal_state)로
+    보내야 한다.
+    """
+    now = utcnow_iso()
+    conn.execute(
+        """
+        UPDATE signal_state SET
+            data_status = ?, next_buy_price = ?, take_profit_price = ?,
+            trailing_stop_price = ?, computed_at = ?
+        WHERE instrument_id = ?
+        """,
+        (data_status, next_buy_price, take_profit_price, trailing_stop_price, now, instrument_id),
+    )
+    return get_signal_state(conn, instrument_id)
+
+
 def acknowledge_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, Any] | None:
     """현재 latest_event_id를 acknowledged_event_id에 그대로 복사해 배너를 끈다.
     이후 상태가 실제로 또 바뀌어 latest_event_id가 갱신되기 전까지는 다시 뜨지 않는다."""

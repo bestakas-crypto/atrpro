@@ -50,6 +50,15 @@ python3.12 -m venv /opt/atrsite/venv
 /opt/atrsite/venv/bin/pip install -r requirements.txt
 ```
 
+서버를 처음부터 다시 설치하는 상황(재해복구 등)이라 지금 검증된 조합을 정확히
+재현하고 싶으면, 간접 의존성(starlette 등)까지 전부 고정한
+`requirements-lock.txt`를 대신 써도 된다(2026-08-06 추가, 클린 Python 3.12.3
+venv에서 생성):
+
+```bash
+/opt/atrsite/venv/bin/pip install -r requirements-lock.txt
+```
+
 ## 4. 값 채우기
 
 ```bash

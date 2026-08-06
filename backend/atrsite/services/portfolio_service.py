@@ -28,6 +28,7 @@ from .atr_engine import InsufficientDataError, latest_atr
 from .market_schedule import compute_data_status
 from .position_engine import PositionState, Trade as EngineTrade, apply_trade, replay_trades
 from .signal_engine import (
+    BLOCKED_DATA_STATUSES,
     DataStatus,
     SignalInput,
     SignalStatus,
@@ -108,6 +109,28 @@ def recompute_signal(conn: sqlite3.Connection, instrument_id: str) -> dict[str, 
 
     previous = signals_repo.get_signal_state(conn, instrument_id)
     previous_status = SignalStatus(previous["status"]) if previous else None
+
+    # 2026-08-06 실전 버그 수정 -- 데이터 장애(STALE/API_ERROR/INSUFFICIENT_DATA)
+    # 중엔 determine_signal()이 항상 NEUTRAL/NO_POSITION만 반환하는데(신규 신호
+    # 판정을 보류한다는 뜻이지 "관망으로 확정됐다"는 뜻이 아님), 이걸 그대로
+    # signal_state에 덮어쓰면 떠 있던 손절/익절 경고가 조용히 사라진다(GPT
+    # 코드리뷰로 실전 재현됨). 이미 계산된 적 있는 종목이면 여기서 즉시
+    # 반환하고 data_status/기준가(시세 신선도와 무관하게 계산 가능)만 갱신한다
+    # -- status/reason/latest_event_id/acknowledged_event_id는 그대로,
+    # 새 signal_events도 텔레그램 알림도 만들지 않는다(실제 상태가 바뀐 게
+    # 아니라 "보이지 않게" 됐을 뿐이므로). 이번이 이 종목의 첫 계산(previous가
+    # None)이면 보존할 상태가 없으므로 아래 일반 경로로 그대로 진행한다 --
+    # 그 경로에서도 determine_signal()이 데이터 장애를 이미 반영해 안전한
+    # 초기값(NEUTRAL/NO_POSITION)을 만들어준다.
+    if previous is not None and data_status in BLOCKED_DATA_STATUSES:
+        return signals_repo.update_data_status_only(
+            conn, instrument_id,
+            data_status=data_status.value,
+            next_buy_price=next_buy_price,
+            take_profit_price=take_profit_price,
+            trailing_stop_price=instrument["trailing_stop_price"],
+        )
+
     # 스펙 9.4 히스테리시스 -- 직전 신호가 이미 켜져 있었는지를 넘겨서, 기준선을
     # 살짝 반복 통과하는 가격에 매 폴링마다 신호가 깜빡이지 않게 한다.
     was_hit_buy = previous_status == SignalStatus.BUY_TRIGGERED

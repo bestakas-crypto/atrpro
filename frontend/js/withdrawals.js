@@ -181,8 +181,12 @@ function renderResultSummary(resp) {
     el.accountBreakdown.classList.remove('open');
   } else {
     el.btnToggleAccountBreakdown.hidden = false;
+    // 2026-08-06 XSS 수정 -- account_name_snapshot은 사용자가 자유롭게 입력한
+    // 계좌 이름이라(예금 등록 시 텍스트 그대로) escapeText() 없이 넣으면 안 됨.
+    // 카드 메타(221번 줄)/삭제 확인(375번 줄)은 이미 이스케이프하고 있었는데
+    // 여기 계좌별 합계만 빠져 있었다.
     el.accountBreakdown.innerHTML = accounts
-      .map((a) => `<div>${a.account_name_snapshot} · ${a.currency} ${formatAmount(a.total, a.currency)} (${a.count}건)</div>`)
+      .map((a) => `<div>${escapeText(a.account_name_snapshot)} · ${a.currency} ${formatAmount(a.total, a.currency)} (${a.count}건)</div>`)
       .join('');
   }
 }
