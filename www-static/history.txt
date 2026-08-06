@@ -1,0 +1,65 @@
+====================================================================
+  www.kunoh.top (KUNOH 홈페이지) 배포 히스토리
+====================================================================
+작성일: 2026-08-06
+
+이 문서는 C:\strpro\www-static\(정적 사이트, www.kunoh.top으로 배포)의
+변경 이력을 기록한다. ATRsite-pro 앱 자체의 개발 히스토리는 별도 문서
+(C:\strpro\history.txt)에 있고, 이 홈페이지는 완전히 독립된 프로젝트라
+따로 관리한다.
+
+배포 구조 요약:
+  - 로컬 소스: C:\strpro\www-static\ (index.html/mobile.html/style.css/
+    favicon.svg -- JS 없는 순수 정적 페이지)
+  - 서버 경로: /var/www/kunoh-home/ (소유자 www-data), nginx가 root로
+    직접 정적 서빙(백엔드 프로세스/빌드 스텝 없음)
+  - 재배포 절차: 로컬 파일 수정 -> scp로 서버 업로드 -> sudo chown
+    www-data:www-data -> 끝(재시작 불필요)
+  - VPS/nginx 설정 등 인프라 세부사항은 이 저장소 밖의 세션 메모리에
+    있음(strpro_vps_access.md) -- 필요하면 Claude에게 물어볼 것.
+
+--------------------------------------------------------------------
+
+[2026-08-03 -- 최초 배포]
+
+원래 로컬에 있던 C:\strpro\www\는 ChatGPT Sites 빌더가 만든 Next.js/
+vinext 프로젝트였는데, Cloudflare Workers 전용 바인딩(D1/ASSETS/이미지
+최적화)을 써서 이 VPS(순수 nginx, Cloudflare 아님)에는 그대로 올릴 수
+없었다. 사용자 확인 후 같은 디자인/문구를 그대로 유지하면서 정적
+HTML/CSS로 다시 만들어 C:\strpro\www-static\에 작성(index.html/
+style.css/favicon.svg, mailto 링크만 있는 순수 정적 페이지). 원본
+Next.js 프로젝트(C:\strpro\www)는 나중에 Cloudflare Pages/Workers로
+따로 배포할 가능성을 대비해 로컬에 그대로 보존(삭제 안 함).
+
+/var/www/kunoh-home/에 배포, nginx 설정 신규 작성(/etc/nginx/
+sites-available/kunoh-home), www.kunoh.top 전용 인증서 발급.
+
+[2026-08-06 -- 모바일 전용 페이지 분리]
+
+PC 화면 기준으로만 만들어졌던 기존 페이지가 모바일에서 보기 불편하다는
+문제로, 모바일 전용 레이아웃을 별도 페이지로 분리함(Codex/GPT 세션에
+위임해서 작업, 이 프로젝트의 VPS SSH 접속 정보만 전달하고 실제 작업은
+그쪽에서 수행).
+
+변경 내용:
+  - index.html: PC용 레이아웃 유지. 모바일 접속을 감지하면(화면폭 +
+    터치 포인터 + User-Agent를 종합 판별) mobile.html로 자동 리다이렉트
+    하는 스크립트 추가.
+  - mobile.html: 신규 작성. 모바일 전용 레이아웃/그래픽 스타일.
+  - style.css: 모바일 전용 스타일 규칙 추가(기존 PC 스타일과 공유).
+  - 강제 고정 파라미터: PC 버전을 모바일에서도 보려면
+    https://www.kunoh.top/?view=desktop, 모바일 버전을 PC에서 보려면
+    https://www.kunoh.top/mobile.html?view=mobile
+
+작업 흐름: 로컬(C:\strpro\www-static\)을 먼저 수정한 뒤 서버로 업로드
+하는 순서로 진행. 배포 후 다음을 확인:
+  - https://www.kunoh.top/             200 OK
+  - https://www.kunoh.top/mobile.html  200 OK
+  - https://www.kunoh.top/style.css    200 OK
+  - nginx -t                           OK(문법 오류 없음)
+  - 로컬/서버 파일 SHA256 해시 일치 확인 -> 로컬-서버 동기화 상태 확정.
+
+다음에 이 홈페이지를 다시 작업하기 전에는, 혹시 다른 세션이 서버만
+직접 수정했을 가능성에 대비해 로컬(C:\strpro\www-static)과 서버
+(/var/www/kunoh-home)의 파일 해시/수정시각을 먼저 비교하는 습관을
+유지할 것.
