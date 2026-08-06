@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KUNOH | Algorithmic Trading & Business Automation</title>
+<meta name="description" content="KUNOH designs and builds algorithmic trading systems and business automation tools.">
+<link rel="icon" href="favicon.svg">
+<link rel="shortcut icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<script>
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const pages = {
+    ko: { desktop: 'index.html', mobile: 'mobile.html' },
+    en: { desktop: 'en.html', mobile: 'en-mobile.html' },
+    ja: { desktop: 'ja.html', mobile: 'ja-mobile.html' }
+  };
+  const detectLang = () => {
+    const list = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'ko'];
+    const first = list.map((v) => String(v).toLowerCase()).find((v) => v.startsWith('ja') || v.startsWith('en') || v.startsWith('ko'));
+    return first && first.startsWith('ja') ? 'ja' : first && first.startsWith('en') ? 'en' : 'ko';
+  };
+  const detectView = () => {
+    const mobileQuery = window.matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)');
+    const mobileAgent = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    return mobileQuery.matches || mobileAgent ? 'mobile' : 'desktop';
+  };
+  const lang = pages[params.get('lang')] ? params.get('lang') : detectLang();
+  const view = params.get('view') === 'mobile' || params.get('view') === 'desktop' ? params.get('view') : detectView();
+  const target = pages[lang][view];
+  const current = window.location.pathname.split('/').pop() || 'index.html';
+  if (current !== target) window.location.replace(target + window.location.search + window.location.hash);
+})();
+</script>
+</head>
+<body class="mobile-page">
+<main>
+  <nav class="mobile-nav" aria-label="Main navigation">
+    <a class="brand" href="#top" aria-label="KUNOH home"><span class="brand-mark">K</span><span>KUNOH</span></a>
+    <a class="mobile-nav-mail" href="mailto:kuno@kunoh.top" aria-label="Contact">↗</a>
+  </nav>
+
+  <section class="mobile-hero" id="top">
+    <p class="eyebrow"><span></span> Algorithmic Trading · Business Automation</p>
+    <h1>Market rules and<br>business flows,<br><em>built into systems.</em></h1>
+    <p>From algorithmic trading to workflow automation, KUNOH turns complex decisions and scattered data into tools that keep working without constant manual attention.</p>
+    <div class="mobile-actions"><a class="button primary" href="mailto:kuno@kunoh.top">Build Together <span aria-hidden="true">↗</span></a><a class="text-link" href="#services">View Services <span>↓</span></a></div>
+
+    <div class="mobile-system-card" aria-label="System graphic">
+      <div class="mobile-card-head"><span><i class="live-dot"></i> LIVE STRATEGY</span><b>NORMAL</b></div>
+      <div class="mobile-chart" aria-hidden="true">
+        <svg viewBox="0 0 360 140" role="presentation">
+          <defs><linearGradient id="mobileChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9cff3b" stop-opacity=".28"></stop><stop offset="100%" stop-color="#9cff3b" stop-opacity="0"></stop></linearGradient></defs>
+          <path class="chart-area" d="M0 118 L34 103 L67 109 L96 78 L128 88 L157 55 L185 65 L213 40 L239 53 L270 25 L296 35 L324 16 L360 24 L360 140 L0 140 Z"></path>
+          <path class="chart-line" d="M0 118 L34 103 L67 109 L96 78 L128 88 L157 55 L185 65 L213 40 L239 53 L270 25 L296 35 L324 16 L360 24"></path>
+        </svg>
+      </div>
+      <div class="mobile-data-row"><span><small>SIGNAL</small><b>ATR GRID</b></span><span><small>RISK</small><b>MONITORING</b></span><span><small>RUN</small><b>AUTO</b></span></div>
+    </div>
+  </section>
+
+  <section class="mobile-principles" aria-label="Core values">
+    <article><span>01</span><strong>Understand the work first.</strong><p>We analyze real workflows and bottlenecks before choosing technology.</p></article>
+    <article><span>02</span><strong>Turn rules into systems.</strong><p>Human judgment is preserved as data, logic, and repeatable operations.</p></article>
+    <article><span>03</span><strong>Build for operation.</strong><p>The result is not a demo screen, but a tool designed to keep running.</p></article>
+  </section>
+
+  <section class="mobile-section" id="services">
+    <p class="section-kicker">WHAT I BUILD</p>
+    <h2>Repeatable decisions become rules.<br>Repeatable work becomes systems.</h2>
+    <p class="mobile-section-copy">Start at the right size, from one focused tool to the operating flow of an entire team.</p>
+    <article class="mobile-service trading"><div class="service-number">01 / ALGORITHM</div><h3>Algorithmic Trading Systems</h3><p>We translate trading strategies into explicit conditions, risk controls, data pipelines, signals, execution, and monitoring.</p><ul><li>Broker API and market data integration</li><li>Backtesting and trading signal implementation</li><li>Stop-loss, allocation, and volatility controls</li><li>Mobile dashboards and alert systems</li></ul></article>
+    <article class="mobile-service office"><div class="service-number">02 / OPERATIONS</div><h3>Business Automation</h3><p>We turn spreadsheet-driven know-how into structured data and web-based systems that survive staff changes and daily pressure.</p><ul><li>Excel and VBA workflow migration to web systems</li><li>Document scanning, OCR, and automated data entry</li><li>Payroll, inventory, reports, and approvals</li><li>LLM-assisted search, judgment, and guidance</li></ul></article>
+  </section>
+
+  <section class="mobile-statement"><p class="section-kicker">THE POINT OF AUTOMATION</p><blockquote>People may leave with their experience,<br><em>but a well-built system keeps that experience in the company.</em></blockquote><p>We structure expert know-how as rules and data so new people can continue the work at the same quality.</p></section>
+
+  <section class="mobile-section" id="process">
+    <p class="section-kicker">HOW I WORK</p>
+    <h2>Understand the complexity.<br>Make it operate simply.</h2>
+    <div class="mobile-process">
+      <article><span>01</span><i>DISCOVER</i><h3>Workflow Analysis</h3><p>We map the actual sequence of work, repeated decisions, and bottlenecks.</p></article>
+      <article><span>02</span><i>ARCHITECT</i><h3>System Design</h3><p>Documents, rules, and scattered data are organized into structure and flow.</p></article>
+      <article><span>03</span><i>BUILD</i><h3>Development</h3><p>We validate small, improve quickly, and build tools that can be used in practice.</p></article>
+      <article><span>04</span><i>OPERATE</i><h3>Deployment & Operation</h3><p>Security, backups, logs, and handover are included so the result can run.</p></article>
+    </div>
+  </section>
+
+  <section class="mobile-contact"><p class="section-kicker">START A PROJECT</p><h2>If work repeats,<br>there is a way to automate it.</h2><p>Tell us about the spreadsheets, documents, and work habits you use today. We will sort out what should remain human and what should become a system.</p><a class="email-link" href="mailto:kuno@kunoh.top">kuno@kunoh.top <span aria-hidden="true" class="mail-icon">↗</span></a></section>
+  <footer class="mobile-footer"><a class="brand" href="#top"><span class="brand-mark">K</span><span>KUNOH</span></a><p>Algorithmic Trading & Business Automation</p><p>© 2026 KUNOH. All rights reserved.</p></footer>
+</main>
+</body>
+</html>

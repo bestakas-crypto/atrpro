@@ -11,12 +11,26 @@
 <script>
 (() => {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('view') === 'desktop') return;
-  const mobileQuery = window.matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)');
-  const mobileAgent = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  if (mobileQuery.matches || mobileAgent) {
-    window.location.replace('mobile.html' + window.location.hash);
-  }
+  const pages = {
+    ko: { desktop: 'index.html', mobile: 'mobile.html' },
+    en: { desktop: 'en.html', mobile: 'en-mobile.html' },
+    ja: { desktop: 'ja.html', mobile: 'ja-mobile.html' }
+  };
+  const detectLang = () => {
+    const list = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'ko'];
+    const first = list.map((v) => String(v).toLowerCase()).find((v) => v.startsWith('ja') || v.startsWith('en') || v.startsWith('ko'));
+    return first && first.startsWith('ja') ? 'ja' : first && first.startsWith('en') ? 'en' : 'ko';
+  };
+  const detectView = () => {
+    const mobileQuery = window.matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)');
+    const mobileAgent = /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    return mobileQuery.matches || mobileAgent ? 'mobile' : 'desktop';
+  };
+  const lang = pages[params.get('lang')] ? params.get('lang') : detectLang();
+  const view = params.get('view') === 'mobile' || params.get('view') === 'desktop' ? params.get('view') : detectView();
+  const target = pages[lang][view];
+  const current = window.location.pathname.split('/').pop() || 'index.html';
+  if (current !== target) window.location.replace(target + window.location.search + window.location.hash);
 })();
 </script>
 </head>
