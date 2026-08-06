@@ -8,6 +8,19 @@
 (C:\strpro\history.txt)에 있고, 이 홈페이지는 완전히 독립된 프로젝트라
 따로 관리한다.
 
+이 파일의 용도:
+  - www.kunoh.top 전용 변경 이력 기록. ATRsite-pro 앱의 history.txt와
+    섞지 않는다.
+  - 재배포 절차 문서화. 로컬 수정 -> scp 업로드 -> www-data 소유권
+    정리라는 순서를 다음 작업자가 바로 이어받을 수 있게 한다.
+  - 의사결정 근거 기록. 예를 들어 Cloudflare Workers 전용 Next.js 원본을
+    이 VPS에 그대로 올리지 않고 정적 HTML/CSS로 분리한 이유를 남긴다.
+  - Claude/Codex 등 여러 세션과 에이전트 사이의 인수인계 문서 역할.
+  - 배포 후 검증 항목(HTTP 200, nginx -t, SHA256 해시 비교)을 남겨
+    다음 배포 때도 같은 수준으로 확인하게 한다.
+  - ?view=desktop / ?view=mobile 같은 코드 안의 세부 동작을 사람이
+    빠르게 읽을 수 있게 설명한다.
+
 배포 구조 요약:
   - 로컬 소스: C:\strpro\www-static\ (index.html/mobile.html/style.css/
     favicon.svg -- JS 없는 순수 정적 페이지)
