@@ -414,10 +414,15 @@ export async function refreshAllQuotes(ctx) {
 
   await loadAndRenderList(ctx);
 
+  // 2026-08-06 -- "주가 갱신" 버튼을 누르면 환율(fx_updated/fx_failed)도 같이
+  // 자동 갱신된다(fx_rate_client.py, 사용자 요청). 종목 결과와 한 줄 요약에
+  // 같이 붙여서 보여준다.
   const parts = [];
   if (result.updated.length) parts.push(`${result.updated.length}개 갱신됨`);
   if (result.failed.length) parts.push(`${result.failed.length}개 실패`);
   if (result.skipped.length) parts.push(`KIS 코드 없음 ${result.skipped.length}개는 건너뜀`);
+  if (result.fx_updated && result.fx_updated.length) parts.push(`환율 갱신: ${result.fx_updated.join(', ')}`);
+  if (result.fx_failed && result.fx_failed.length) parts.push(`환율 갱신 실패: ${result.fx_failed.join(', ')}`);
   if (parts.length === 0) {
     ctx.showToast('KIS 종목코드가 설정된 종목이 없습니다.');
     return;

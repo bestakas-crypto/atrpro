@@ -15,6 +15,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
+from ..adapters import fx_rate_client
 from ..repositories import deposits as deposits_repo
 from ..repositories import fx as fx_repo
 from ..repositories import instruments as instruments_repo
@@ -368,10 +369,25 @@ def refresh_quote_now(conn: sqlite3.Connection, instrument_id: str) -> dict[str,
     )
 
 
+def _currencies_in_use(conn: sqlite3.Connection) -> list[str]:
+    """대시보드 총계 계산에 실제로 쓰이는 통화 목록(KRW 제외) -- 활성 종목 +
+    등록된 예금 계좌 기준. build_dashboard()가 참조하는 범위와 동일하게 맞춘다."""
+    currencies = {i["currency"] for i in instruments_repo.list_instruments(conn)}
+    currencies |= {d["currency"] for d in deposits_repo.list_deposits(conn)}
+    currencies.discard("KRW")
+    return sorted(currencies)
+
+
 def refresh_all_quotes_now(conn: sqlite3.Connection) -> dict[str, Any]:
     """목록 화면의 "주가 갱신" 버튼 -- KIS 종목코드가 설정된 종목 전부를 한 번에
     갱신한다 (2026-08-02 추가). 종목 하나가 실패해도(코드 오류, 상장폐지 등)
     나머지는 계속 진행하고, 끝나면 결과를 요약해서 돌려준다.
+
+    2026-08-06 추가: 같은 버튼을 누르면 환율도 함께 자동 갱신한다(사용자 요청 --
+    지금까지 fx_rates는 수동 입력만 있어서 며칠씩 방치되기 쉬웠음). 실제로
+    종목/예금에 쓰이고 있는 통화만 조회하고(안 쓰는 통화까지 불필요하게 외부
+    호출 안 함), 조회 실패한 통화는 기존 저장값을 그대로 둔다(fx_rate_client가
+    예외를 던지지 않고 None만 반환하므로 여기서 조용히 건너뛰면 됨).
 
     KisClient.rate_limiter가 이미 호출 사이 최소 간격을 강제하므로(스펙 11.2)
     여기서 별도로 속도를 조절할 필요는 없다.
@@ -390,7 +406,20 @@ def refresh_all_quotes_now(conn: sqlite3.Connection) -> dict[str, Any]:
         except RefreshQuoteError as exc:
             failed.append({"name": instrument["name"], "error": str(exc)})
 
-    return {"updated": updated, "skipped": skipped, "failed": failed}
+    fx_updated: list[str] = []
+    fx_failed: list[str] = []
+    for currency in _currencies_in_use(conn):
+        rate = fx_rate_client.fetch_rate_to_krw(currency)
+        if rate is None:
+            fx_failed.append(currency)
+        else:
+            fx_repo.upsert_rate(conn, currency, rate, source="auto")
+            fx_updated.append(currency)
+
+    return {
+        "updated": updated, "skipped": skipped, "failed": failed,
+        "fx_updated": fx_updated, "fx_failed": fx_failed,
+    }
 
 
 def commit_manual_atr(

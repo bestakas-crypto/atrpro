@@ -365,3 +365,58 @@ def test_refresh_all_quotes_now_updates_only_instruments_with_kis_code(db_conn, 
 
     assert market_data_repo.get_quote(db_conn, with_code["id"])["source"] == "kis"
     assert market_data_repo.get_quote(db_conn, without_code["id"]) is None
+
+
+# 2026-08-06 -- "주가 갱신" 버튼을 누르면 환율도 같이 자동 갱신(사용자 요청).
+# fx_rate_client는 항상 monkeypatch로 대체해서 실제 frankfurter.dev를 호출하지
+# 않는다(다른 외부 어댑터들과 동일한 테스트 원칙).
+
+def test_refresh_all_quotes_now_refreshes_fx_for_currencies_in_use(db_conn, force_kis_dummy_mode, monkeypatch):
+    _make_instrument(db_conn, name="달러종목", currency="USD")
+    deposits_repo.create_deposit(db_conn, account_name="엔화예금", amount=100000, currency="JPY")
+
+    calls = []
+
+    def fake_fetch(currency, **kwargs):
+        calls.append(currency)
+        return {"USD": 1423.72, "JPY": 9.0343}.get(currency)
+
+    monkeypatch.setattr(portfolio_service.fx_rate_client, "fetch_rate_to_krw", fake_fetch)
+
+    result = portfolio_service.refresh_all_quotes_now(db_conn)
+    assert sorted(calls) == ["JPY", "USD"]
+    assert sorted(result["fx_updated"]) == ["JPY", "USD"]
+    assert result["fx_failed"] == []
+
+    rates = fx_repo.list_rates(db_conn)
+    assert rates["USD"]["rate_to_krw"] == pytest.approx(1423.72)
+    assert rates["USD"]["source"] == "auto"
+    assert rates["JPY"]["rate_to_krw"] == pytest.approx(9.0343)
+
+
+def test_refresh_all_quotes_now_skips_krw_only_portfolio(db_conn, force_kis_dummy_mode, monkeypatch):
+    _make_instrument(db_conn, name="원화종목", currency="KRW")
+
+    def fake_fetch(currency, **kwargs):
+        raise AssertionError("KRW만 있으면 환율 조회를 시도하면 안 됨")
+
+    monkeypatch.setattr(portfolio_service.fx_rate_client, "fetch_rate_to_krw", fake_fetch)
+
+    result = portfolio_service.refresh_all_quotes_now(db_conn)
+    assert result["fx_updated"] == []
+    assert result["fx_failed"] == []
+
+
+def test_refresh_all_quotes_now_keeps_old_rate_when_fx_fetch_fails(db_conn, force_kis_dummy_mode, monkeypatch):
+    _make_instrument(db_conn, name="달러종목", currency="USD")
+    fx_repo.upsert_rate(db_conn, "USD", 1300.0, source="manual")
+
+    monkeypatch.setattr(portfolio_service.fx_rate_client, "fetch_rate_to_krw", lambda currency, **kw: None)
+
+    result = portfolio_service.refresh_all_quotes_now(db_conn)
+    assert result["fx_updated"] == []
+    assert result["fx_failed"] == ["USD"]
+
+    rates = fx_repo.list_rates(db_conn)
+    assert rates["USD"]["rate_to_krw"] == pytest.approx(1300.0)  # 실패해도 기존 값 그대로
+    assert rates["USD"]["source"] == "manual"  # source도 안 바뀜
