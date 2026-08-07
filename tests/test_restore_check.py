@@ -37,6 +37,7 @@ def test_core_tables_covers_every_version_feature(db_conn):
         "investment_schedules", "schedule_occurrences",  # v1.2
         "portfolio_daily_snapshots", "portfolio_snapshot_items",  # v1.3
         "analysis_results", "companies", "company_analysis_results",  # v1.0 후반
+        "trade_plans", "trade_plan_instruments", "trade_plan_tiers",  # 매매계획 Phase 1
     }
     missing = expected_present - set(CORE_TABLES)
     assert missing == set(), f"CORE_TABLES에서 빠진 핵심 테이블: {missing}"

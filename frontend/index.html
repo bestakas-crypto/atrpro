@@ -45,6 +45,12 @@
       <span aria-hidden="true">📈</span>
       <span id="asset-history-badge" class="icon-badge" hidden></span>
     </a>
+    <!-- 2026-08-07: 매매계획(트리거 감시) Phase 1. 사용자가 직접 정한
+         트리거·매도단계를 등록/조회하는 독립 화면. -->
+    <a id="btn-open-trade-plans" class="icon-btn" aria-label="매매계획" title="매매계획"
+       href="trade-plans.html" target="_blank" rel="noopener">
+      <span aria-hidden="true">🎯</span>
+    </a>
   </div>
   <h1 id="header-title">ATRsite-pro</h1>
   <div class="header-actions">
@@ -141,6 +147,14 @@
     <p id="signal-acknowledged-note" class="signal-acknowledged-note" hidden>
       확인한 신호입니다 (기준 값은 계속 갱신됩니다). 상태가 바뀌면 다시 알려드립니다.
     </p>
+
+    <!-- 2026-08-07: 매매계획(트리거 감시) 요약 카드. 기존 ATR 신호(위)와는
+         별개 트랙 -- 사용자가 직접 등록한 계획이 있을 때만 요약만 보여주고,
+         등록/수정은 trade-plans.html에서 한다. -->
+    <div id="trade-plan-summary" class="trade-plan-summary" hidden>
+      <span id="trade-plan-summary-text"></span>
+      <a href="trade-plans.html" target="_blank" rel="noopener">매매계획 화면 열기 →</a>
+    </div>
 
     <!-- 3. 입력 3칸 (수동 입력 또는 KIS 종목코드가 설정된 경우 즉시 조회) -->
     <section class="panel">

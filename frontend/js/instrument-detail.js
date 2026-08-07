@@ -114,8 +114,28 @@ export function renderDetail(ctx) {
   renderPartialSell(ctx, position, currentPrice);
   renderTxHistory(ctx, detail.trades);
   renderSettingsFields(ctx, instrument);
+  renderTradePlanSummary(ctx, instrument);
 
   el.btnOpenSell.disabled = position.quantity <= 0;
+}
+
+// 2026-08-07 추가: 매매계획(트리거 감시) 요약. 기존 ATR 신호와는 완전히
+// 별개 트랙이라 여기서 신호 판단을 하지 않고, 등록된 계획 개수/상태만
+// 요약해서 보여준다 -- 자세한 내용/등록/수정은 trade-plans.html에서.
+async function renderTradePlanSummary(ctx, instrument) {
+  const { el } = ctx;
+  el.tradePlanSummary.hidden = true;
+  try {
+    const plans = await api.listTradePlans({ instrumentId: instrument.id });
+    const active = plans.filter((p) => p.lifecycle_status !== 'CANCELLED' && p.lifecycle_status !== 'COMPLETED');
+    if (active.length === 0) return;
+    const STATUS_LABEL = { ARMED: '감시중', ACTIVE: '활성', PARTIALLY_FIRED: '일부발동' };
+    const summary = active.map((p) => `${p.label}(${STATUS_LABEL[p.lifecycle_status] || p.lifecycle_status})`).join(', ');
+    el.tradePlanSummaryText.textContent = `매매계획 ${active.length}건: ${summary}`;
+    el.tradePlanSummary.hidden = false;
+  } catch (e) {
+    // 조용히 무시 -- 요약 카드는 부가 정보라 실패해도 종목 상세 화면 자체를 막지 않는다.
+  }
 }
 
 function renderDrawdown(ctx, instrument, currentPrice) {

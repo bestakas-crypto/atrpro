@@ -103,6 +103,21 @@ export const api = {
   getFx: () => request('GET', '/api/v1/fx'),
   putFx: (body) => request('PUT', '/api/v1/fx', body),
 
+  // 매매계획(트리거 감시) Phase 1 -- 2026-08-07 추가.
+  listTradePlans: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.instrumentId) qs.set('instrument_id', params.instrumentId);
+    if (params.status) qs.set('status', params.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request('GET', `/api/v1/trade-plans${suffix}`);
+  },
+  getTradePlan: (id) => request('GET', `/api/v1/trade-plans/${id}`),
+  createTradePlan: (body) => request('POST', '/api/v1/trade-plans', body),
+  updateTradePlan: (id, body) => request('PATCH', `/api/v1/trade-plans/${id}`, body),
+  cancelTradePlan: (id, reason) =>
+    request('DELETE', `/api/v1/trade-plans/${id}?reason=${encodeURIComponent(reason)}`),
+  getTradePlanHistory: (id) => request('GET', `/api/v1/trade-plans/${id}/history`),
+
   importLegacy: (payload, { dryRun = true } = {}) =>
     request('POST', `/api/v1/legacy/import?dry_run=${dryRun ? '1' : '0'}`, payload),
 

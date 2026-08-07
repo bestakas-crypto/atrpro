@@ -740,6 +740,29 @@ input:focus {
   display: none;
 }
 
+.trade-plan-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: -6px 0 12px;
+  color: var(--text-dim);
+}
+
+.trade-plan-summary a {
+  color: var(--teal);
+  white-space: nowrap;
+}
+
+.trade-plan-summary[hidden] {
+  display: none;
+}
+
 .signal-red {
   background: var(--red-soft);
   border-color: var(--red-border);

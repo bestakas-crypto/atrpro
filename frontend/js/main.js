@@ -27,6 +27,7 @@ function cacheDom() {
     'stock-list', 'stock-list-empty', 'deposit-list', 'deposit-list-empty',
     'view-detail', 'd-avg-price', 'd-qty', 'd-cost-basis', 'd-pnl',
     'signal-banner', 'signal-text', 'btn-signal-acknowledge', 'signal-acknowledged-note',
+    'trade-plan-summary', 'trade-plan-summary-text',
     'input-current-price', 'input-atr', 'input-post-high', 'input-auto-update-high',
     'btn-refresh-quote', 'refresh-quote-hint',
     'd-next-buy', 'd-take-profit', 'd-trailing-stop',

@@ -19,6 +19,7 @@ import sqlite3
 import time
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
+from zoneinfo import ZoneInfo
 
 from . import db
 from .adapters import telegram_client
@@ -26,9 +27,15 @@ from .adapters.kis_client import KisApiError, get_client
 from .repositories import instruments as instruments_repo
 from .repositories import market_data as market_data_repo
 from .repositories import snapshots as snapshots_repo
-from .services import notification_service, portfolio_service, schedule_notification_service, snapshot_service
+from .services import (
+    notification_service,
+    portfolio_service,
+    schedule_notification_service,
+    snapshot_service,
+    trade_plan_service,
+)
 from .services.atr_engine import InsufficientDataError, latest_atr
-from .services.market_schedule import MarketPhase, decide_polling
+from .services.market_schedule import MarketPhase, decide_polling, decide_us_polling, determine_us_market_phase
 
 logger = logging.getLogger("atrsite.worker")
 
@@ -44,14 +51,33 @@ _SNAPSHOT_RETRY_TIMES = (dt_time(6, 30), dt_time(6, 40), dt_time(7, 0))
 _SNAPSHOT_WINDOW_START = dt_time(6, 15)
 _SNAPSHOT_WINDOW_END = dt_time(7, 15)
 
+KST = ZoneInfo("Asia/Seoul")
 
-def poll_quotes(conn: sqlite3.Connection) -> None:
-    """정규장: 현재가 + 당일 고가 조회 후 반영 (스펙 11.3)."""
+
+def _is_domestic_instrument(instrument) -> bool:
+    market = instrument["kis_market"]
+    return not market or market.upper() == "KRX"
+
+
+def poll_quotes(conn: sqlite3.Connection, *, market_group: str = "KRX") -> None:
+    """정규장: 현재가 + 당일 고가 조회 후 반영 (스펙 11.3).
+
+    2026-08-07 추가: market_group으로 국내(KRX)/미국(NAS·NYS·AMS) 종목군을
+    분리해서 폴링한다. 예전에는 이 함수가 시장 구분 없이 전체 종목을
+    돌았는데, 호출부(run_once)가 KRX 정규장 여부 하나로만 폴링할지 말지를
+    정했기 때문에 미국 상장 종목(QQQ/NVDA/QLD 등)은 한국 야간(=실제 미국
+    정규장 시간)에 전혀 자동 폴링되지 않았다(매매계획 감시 기능을 만들며
+    발견함). 이제 두 시장을 각자의 실제 거래시간에 맞춰 따로 폴링한다."""
     client = get_client()
     for instrument in instruments_repo.list_instruments(conn):
         code = instrument["kis_code"]
         if not code:
             logger.debug("종목 %s(%s)에 kis_code가 없어 건너뜀", instrument["name"], instrument["id"])
+            continue
+        is_domestic = _is_domestic_instrument(instrument)
+        if market_group == "KRX" and not is_domestic:
+            continue
+        if market_group == "US" and is_domestic:
             continue
         try:
             quote = client.get_current_price(code, market=instrument["kis_market"], is_etf=instrument["is_etf"])
@@ -70,8 +96,11 @@ def poll_quotes(conn: sqlite3.Connection) -> None:
         logger.info("현재가 반영 %s: %s", instrument["name"], quote.price)
 
 
-def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
-    """마감 후: 확정 일봉 수집 -> ATR 갱신 -> (체크포인트/백업은 4~5단계에서 연결) (스펙 11.3)."""
+def collect_daily_bars_and_update_atr(conn: sqlite3.Connection, *, market_group: str = "KRX") -> None:
+    """마감 후: 확정 일봉 수집 -> ATR 갱신 -> (체크포인트/백업은 4~5단계에서 연결) (스펙 11.3).
+
+    2026-08-07: market_group으로 국내/미국 종목군을 분리(poll_quotes와 동일한
+    이유)."""
     client = get_client()
     end = date.today().isoformat()
     start = (date.today() - timedelta(days=60)).isoformat()
@@ -79,6 +108,11 @@ def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
     for instrument in instruments_repo.list_instruments(conn):
         code = instrument["kis_code"]
         if not code:
+            continue
+        is_domestic = _is_domestic_instrument(instrument)
+        if market_group == "KRX" and not is_domestic:
+            continue
+        if market_group == "US" and is_domestic:
             continue
         try:
             bars = client.get_daily_bars(
@@ -106,6 +140,11 @@ def collect_daily_bars_and_update_atr(conn: sqlite3.Connection) -> None:
 # 똑같은 일봉 조회를 수백 번 반복하게 된다 -- 날짜가 바뀌면(다음 거래일
 # POST_MARKET) 자동으로 다시 수집하도록 날짜만 기억한다.
 _last_daily_bars_collection_date: date | None = None
+_last_daily_bars_collection_date_us: date | None = None  # 2026-08-07 추가 -- 미국장용 별도 가드.
+                                                            # US POST_MARKET 구간은 항상 하나의
+                                                            # KST 달력일 안에 통째로 들어가므로
+                                                            # (전날 늦은밤~다음날 늦은밤까지) KST
+                                                            # 날짜로 가드해도 안전하다.
 
 # v1.2 예약알림 -- 하루 1번만 "오늘 알릴 회차"를 훑어 outbox에 적재하면 충분하다
 # (KRX 시장 상태와 무관하게 매일 돌아야 함 -- GENERAL/RULE_REVIEW 등은 휴장일에도
@@ -178,25 +217,58 @@ def _send_snapshot_alert(text: str) -> None:
 
 
 def run_once(now: datetime | None = None) -> MarketPhase:
-    """폴링 결정 1회 실행 -- 테스트와 `--once` 모드가 공유하는 진입점."""
-    global _last_daily_bars_collection_date, _last_schedule_notification_enqueue_date
+    """폴링 결정 1회 실행 -- 테스트와 `--once` 모드가 공유하는 진입점.
+
+    반환값은 기존과 동일하게 KRX phase 하나만 준다(하위 호환 -- 기존
+    테스트/호출부가 `phase.value`를 그대로 쓰기 때문). 미국장 폴링은 이
+    함수 내부에서 별도로 판정·실행되지만 반환값에는 안 드러난다 -- 필요하면
+    market_schedule.determine_us_market_phase()를 따로 호출해서 확인한다
+    (main()의 sleep 계산이 그렇게 한다)."""
+    global _last_daily_bars_collection_date, _last_daily_bars_collection_date_us
+    global _last_schedule_notification_enqueue_date
     now = now or datetime.now()
     decision = decide_polling(now)
-    logger.info("phase=%s reason=%s", decision.phase.value, decision.reason)
+    now_aware = now if now.tzinfo is not None else now.replace(tzinfo=KST)
+    us_decision = decide_us_polling(now_aware)
+    logger.info(
+        "phase=%s reason=%s | us_phase=%s us_reason=%s",
+        decision.phase.value, decision.reason, us_decision.phase.value, us_decision.reason,
+    )
 
     conn = db.connect()
     try:
         db.init_db(conn)
         if decision.should_poll_quotes:
-            poll_quotes(conn)
+            poll_quotes(conn, market_group="KRX")
+        if us_decision.should_poll_quotes:
+            poll_quotes(conn, market_group="US")
         if decision.should_collect_daily_bars and _last_daily_bars_collection_date != now.date():
-            collect_daily_bars_and_update_atr(conn)
+            collect_daily_bars_and_update_atr(conn, market_group="KRX")
             _last_daily_bars_collection_date = now.date()
+        if us_decision.should_collect_daily_bars and _last_daily_bars_collection_date_us != now.date():
+            collect_daily_bars_and_update_atr(conn, market_group="US")
+            _last_daily_bars_collection_date_us = now.date()
         conn.commit()
+
+        # 2026-08-07 매매계획(트리거 감시) 평가 -- 방금 갱신된 quote_latest를
+        # 그대로 읽는다(추가 KIS 호출 없음, 확정종가 조회만 예외). 기존 ATR
+        # 신호(위)와 완전히 독립적인 별도 트랙이라 항상 매 주기 평가한다.
+        plan_result = trade_plan_service.evaluate_trade_plans(conn, now=now_aware)
+        conn.commit()
+        if plan_result["events"] or plan_result["errors"]:
+            logger.info(
+                "trade plans: evaluated=%s events=%s errors=%s",
+                plan_result["evaluated"], plan_result["events"], plan_result["errors"],
+            )
 
         # Outbox 발송은 별도 커밋 경계로 분리한다 -- 텔레그램 발송 자체가
         # 실패해도(재시도 상태로 기록될 뿐) 이미 반영된 시세/ATR/신호 갱신은
         # 그대로 남아야 하기 때문이다.
+        trade_plan_outbox_result = trade_plan_service.process_outbox(conn)
+        conn.commit()
+        if trade_plan_outbox_result["sent"] or trade_plan_outbox_result["retried"] or trade_plan_outbox_result["failed"]:
+            logger.info("trade plan outbox: sent=%s retried=%s failed=%s", *trade_plan_outbox_result.values())
+
         outbox_result = notification_service.process_outbox(conn)
         conn.commit()
         if outbox_result["sent"] or outbox_result["retried"] or outbox_result["failed"]:
@@ -227,18 +299,28 @@ def run_once(now: datetime | None = None) -> MarketPhase:
     return decision.phase
 
 
-def _sleep_seconds_for(phase: MarketPhase, now: datetime | None = None) -> int:
+def _interval_for_phase(phase: MarketPhase) -> int:
+    if phase == MarketPhase.REGULAR:
+        return REGULAR_POLL_INTERVAL_SECONDS
+    if phase == MarketPhase.HOLIDAY:
+        return HOLIDAY_POLL_INTERVAL_SECONDS
+    return IDLE_POLL_INTERVAL_SECONDS
+
+
+def _sleep_seconds_for(phase: MarketPhase, now: datetime | None = None, us_phase: MarketPhase | None = None) -> int:
+    """2026-08-07: us_phase가 주어지면 KRX/미국 두 시장 중 더 촘촘한 폴링이
+    필요한 쪽 간격을 쓴다(예: 미국 정규장 중이면 KRX가 휴장이어도 5분 간격
+    으로 깨어나야 QQQ 등을 놓치지 않는다)."""
     now = now or datetime.now()
     # v1.3 자산 스냅샷 06:30/06:40/07:00 재시도가 실제로 그 시각 근처에 일어나려면
     # 이 구간만은 휴장일 30분 간격(HOLIDAY_POLL_INTERVAL_SECONDS) 등을 무시하고
     # 촘촘히 깨어나야 한다.
     if _SNAPSHOT_WINDOW_START <= now.time() <= _SNAPSHOT_WINDOW_END:
         return IDLE_POLL_INTERVAL_SECONDS
-    if phase == MarketPhase.REGULAR:
-        return REGULAR_POLL_INTERVAL_SECONDS
-    if phase == MarketPhase.HOLIDAY:
-        return HOLIDAY_POLL_INTERVAL_SECONDS
-    return IDLE_POLL_INTERVAL_SECONDS
+    candidates = [_interval_for_phase(phase)]
+    if us_phase is not None:
+        candidates.append(_interval_for_phase(us_phase))
+    return min(candidates)
 
 
 def main() -> None:
@@ -253,8 +335,10 @@ def main() -> None:
         return
 
     while True:
-        phase = run_once()
-        time.sleep(_sleep_seconds_for(phase))
+        now = datetime.now()
+        phase = run_once(now=now)
+        us_phase = determine_us_market_phase(now.replace(tzinfo=KST))
+        time.sleep(_sleep_seconds_for(phase, now=now, us_phase=us_phase))
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from .api.instruments import router as instruments_router
 from .api.legacy import router as legacy_router
 from .api.schedules import occurrences_router, plans_router, schedules_router
 from .api.snapshots import router as snapshots_router
+from .api.trade_plans import router as trade_plans_router
 from .api.trades import router as trades_router
 from .api.withdrawals import router as withdrawals_router
 from .config import settings
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(schedules_router)
     app.include_router(occurrences_router)
     app.include_router(snapshots_router)
+    app.include_router(trade_plans_router)
     app.include_router(legacy_router)
     app.include_router(analysis_router)
     app.include_router(company_router)

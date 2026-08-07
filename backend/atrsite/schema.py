@@ -569,4 +569,107 @@ DDL_STATEMENTS: list[str] = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_portfolio_daily_snapshots_status ON portfolio_daily_snapshots(data_quality_status)",
     "CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_items_snapshot_id ON portfolio_snapshot_items(snapshot_id)",
+
+    # ---- 매매계획(사용자 트리거 감시) Phase 1 -- TRAIL만 지원 ---------------
+    # 설계 근거: PLAN_trade_trigger_v1.md, history.txt "[매매계획 감시 기능
+    # Phase 1]" 항목. 이 기능은 매매 타당성을 프로그램이 판단하지 않는다 --
+    # 사용자가 LLM과 상의해 이미 확정한 트리거/단계를 그대로 저장하고
+    # 감시·알림만 한다(기존 ATR 손절/익절 신호와는 완전히 독립적인 별도
+    # 신호 트랙).
+    """
+    CREATE TABLE IF NOT EXISTS trade_plans (
+        id                         TEXT PRIMARY KEY,
+        plan_type                  TEXT NOT NULL,   -- Phase 1: 'TRAIL'만 허용
+        label                       TEXT NOT NULL,
+        lifecycle_status             TEXT NOT NULL DEFAULT 'ARMED',
+                                     -- ARMED/ACTIVE/PARTIALLY_FIRED/COMPLETED/CANCELLED
+        trigger_price                 REAL,
+        trigger_direction              TEXT,   -- ABOVE / BELOW
+        trigger_activated_at            TEXT,
+        peak_price_since_trigger         REAL, -- instruments.post_entry_high_price와
+                                                 -- 별개 필드(의미가 다름 -- 4.2 참고)
+        confirm_mode                      TEXT NOT NULL DEFAULT 'CLOSE', -- CLOSE/INTRADAY
+        price_reference_instrument_id      TEXT REFERENCES instruments(id),
+                                             -- 여러 계좌가 연결된 계획에서 가격을
+                                             -- 한 번만 조회할 대표 종목(명시 지정,
+                                             -- 우연히 아무 행이나 고르지 않음)
+        approach_notified_at                 TEXT, -- TRIGGER_APPROACH 중복방지(계획당 1회)
+        purpose                               TEXT,
+        invalidation_condition                 TEXT,
+        review_date                             TEXT,
+        reason                                   TEXT,
+        version                                  INTEGER NOT NULL DEFAULT 1,
+        created_at                                TEXT NOT NULL,
+        updated_at                                 TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_plan_instruments (
+        -- 계획 하나에 종목(계좌 등록분) 여러 개 연결 -- 예: KODEX 200이 두
+        -- 계좌에 나뉘어 등록된 경우 같은 계획에 둘 다 연결하고 baseline은
+        -- 계좌별로 따로 저장한다(합산해서 하나로 만들지 않음, 계좌별 실행
+        -- 메모가 각각 필요하기 때문).
+        plan_id             TEXT NOT NULL REFERENCES trade_plans(id) ON DELETE CASCADE,
+        instrument_id         TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+        baseline_quantity       REAL NOT NULL, -- 계획 확정 시점 스냅샷(고정),
+                                                 -- 이후 적립매수로 실보유수량이
+                                                 -- 늘어도 이 값은 안 바뀐다
+        display_note              TEXT,
+        PRIMARY KEY (plan_id, instrument_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_plan_tiers (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id          TEXT NOT NULL REFERENCES trade_plans(id) ON DELETE CASCADE,
+        tier_order         INTEGER NOT NULL,
+        pullback_pct          REAL NOT NULL,  -- 최고가 대비 하락률(양수)
+        sell_pct                REAL NOT NULL, -- 이 단계에서 추가로 매도할 비율
+                                                 -- (baseline 대비, 누적 아님)
+        fired_at                  TEXT,
+        fired_peak_price             REAL,   -- 발동 당시 최고가(사후 검증용 스냅샷)
+        fired_reference_price          REAL, -- 발동을 확정한 실제 가격(종가/장중)
+        UNIQUE (plan_id, tier_order)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_plan_history (
+        -- instruments.py의 buy_multiple/sell_multiple 버저닝 패턴을 그대로
+        -- 재사용 -- 수정 전 상태 전체(연결 종목/baseline/tiers 포함)를 JSON
+        -- 스냅샷으로 남겨서 복원 가능하게 한다.
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id             TEXT NOT NULL REFERENCES trade_plans(id) ON DELETE CASCADE,
+        version               INTEGER NOT NULL,
+        snapshot_json           TEXT NOT NULL,
+        change_reason              TEXT,
+        changed_at                   TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trade_plan_notification_outbox (
+        -- notification_outbox(signal_event_id NOT NULL FK, 신호 전용)와
+        -- schedule_notification_outbox 둘 다 재사용 불가(다른 FK 대상) --
+        -- schedule_notification_outbox와 동일한 상태머신/재시도 패턴만
+        -- 복제한 별도 테이블. idempotency_key로 같은 이벤트의 중복 발송을
+        -- 막는다(예: "{plan_id}:TIER_FIRED:{tier_order}:{trade_date}").
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id               TEXT NOT NULL REFERENCES trade_plans(id) ON DELETE CASCADE,
+        event_type              TEXT NOT NULL, -- TRIGGER_APPROACH/TRIGGER_REACHED/
+                                                 -- TIER_PREVIEW/TIER_FIRED/PLAN_REVIEW/DATA_STALE
+        idempotency_key            TEXT NOT NULL,
+        channel                      TEXT NOT NULL DEFAULT 'telegram',
+        status                        TEXT NOT NULL DEFAULT 'PENDING',
+        payload                        TEXT NOT NULL,
+        attempt_count                    INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at                    TEXT,
+        created_at                          TEXT NOT NULL,
+        updated_at                            TEXT NOT NULL,
+        UNIQUE(plan_id, idempotency_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_trade_plans_lifecycle_status ON trade_plans(lifecycle_status)",
+    "CREATE INDEX IF NOT EXISTS idx_trade_plan_instruments_instrument_id ON trade_plan_instruments(instrument_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trade_plan_tiers_plan_id ON trade_plan_tiers(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trade_plan_history_plan_id ON trade_plan_history(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trade_plan_notification_outbox_status ON trade_plan_notification_outbox(status, next_attempt_at)",
 ]
