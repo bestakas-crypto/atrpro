@@ -197,3 +197,45 @@ class ScheduleExecutionCreate(BaseModel):
     executed_amount: Optional[float] = Field(default=None, ge=0)
     executed_at: Optional[str] = None
     memo: Optional[str] = None
+
+
+# backend/atrsite/api/schemas.py -- 매매계획(트리거 감시) Phase 1(2026-08-07 추가).
+
+class TradePlanInstrumentIn(BaseModel):
+    instrument_id: str = Field(min_length=1)
+    baseline_quantity: float = Field(gt=0)
+    display_note: Optional[str] = None
+
+
+class TradePlanTierIn(BaseModel):
+    tier_order: int = Field(ge=1)
+    pullback_pct: float = Field(gt=0)
+    sell_pct: float = Field(gt=0, le=100)
+
+
+class TradePlanCreate(BaseModel):
+    plan_type: Literal["TRAIL"] = "TRAIL"  # Phase 1은 TRAIL만 허용
+    label: str = Field(min_length=1)
+    trigger_price: float = Field(gt=0)
+    trigger_direction: Literal["ABOVE", "BELOW"]
+    confirm_mode: Literal["CLOSE", "INTRADAY"] = "CLOSE"
+    price_reference_instrument_id: str = Field(min_length=1)
+    instruments: list[TradePlanInstrumentIn] = Field(min_length=1)
+    tiers: list[TradePlanTierIn] = Field(default_factory=list)
+    purpose: Optional[str] = None
+    invalidation_condition: Optional[str] = None
+    review_date: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class TradePlanUpdate(BaseModel):
+    change_reason: str = Field(min_length=1)
+    label: Optional[str] = None
+    trigger_price: Optional[float] = Field(default=None, gt=0)
+    confirm_mode: Optional[Literal["CLOSE", "INTRADAY"]] = None
+    purpose: Optional[str] = None
+    invalidation_condition: Optional[str] = None
+    review_date: Optional[str] = None
+    reason: Optional[str] = None
+
+

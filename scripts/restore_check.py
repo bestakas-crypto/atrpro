@@ -50,6 +50,9 @@ CORE_TABLES = [
     "schedule_executions", "schedule_notification_outbox",
     # v1.3 -- 일별 총자산/손익 스냅샷
     "portfolio_daily_snapshots", "portfolio_snapshot_items",
+    # 매매계획(트리거 감시) Phase 1 -- 2026-08-07
+    "trade_plans", "trade_plan_instruments", "trade_plan_tiers",
+    "trade_plan_history", "trade_plan_notification_outbox",
 ]
 
 

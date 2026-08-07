@@ -119,6 +119,54 @@ def test_collect_daily_bars_updates_atr_and_ratchet(db_conn):
     assert updated["trailing_stop_price"] is not None
 
 
+# ---------------------------------------------------------------------------
+# 2026-08-07 매매계획 감시 기능 조사 중 발견: worker의 유일한 폴링 게이트가
+# KRX 09:00~15:30 뿐이라 QQQ 등 미국 상장 종목이 한국 야간(=실제 미국
+# 정규장)에 전혀 자동 폴링되지 않았다. market_group 분리로 고친 결과 검증.
+# ---------------------------------------------------------------------------
+
+def _make_us_instrument(conn, name="QQQ", kis_code="QQQ", kis_market="NAS"):
+    inst = instruments_repo.create_instrument(conn, name=name, currency="USD")
+    instruments_repo.update_settings(conn, inst["id"], kis_code=kis_code, kis_market=kis_market)
+    return instruments_repo.get_instrument(conn, inst["id"])
+
+
+def test_poll_quotes_krx_group_skips_us_instrument(db_conn):
+    krx_inst = _make_instrument_with_kis_code(db_conn)
+    us_inst = _make_us_instrument(db_conn)
+    worker.poll_quotes(db_conn, market_group="KRX")
+    assert market_data_repo.get_quote(db_conn, krx_inst["id"]) is not None
+    assert market_data_repo.get_quote(db_conn, us_inst["id"]) is None
+
+
+def test_poll_quotes_us_group_skips_krx_instrument(db_conn):
+    krx_inst = _make_instrument_with_kis_code(db_conn)
+    us_inst = _make_us_instrument(db_conn)
+    worker.poll_quotes(db_conn, market_group="US")
+    assert market_data_repo.get_quote(db_conn, us_inst["id"]) is not None
+    assert market_data_repo.get_quote(db_conn, krx_inst["id"]) is None
+
+
+def test_run_once_polls_qqq_during_us_regular_hours_even_when_krx_closed(db_conn, monkeypatch):
+    """한국시간 야간(=미국 정규장) -- KRX는 HOLIDAY/PRE_MARKET이어도 QQQ는
+    자동으로 폴링돼야 한다. 2026-08-05(수) 22:45 KST는 여름(EDT) 미국
+    정규장 중(개장 22:30 KST)이면서 이미 KRX 정규장(09:00~15:30)은 지난
+    한밤중이라 KRX 쪽은 POST_MARKET/HOLIDAY 구간이다."""
+    monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
+    us_inst = _make_us_instrument(db_conn)
+
+    worker.run_once(now=datetime(2026, 8, 5, 22, 45))
+    assert market_data_repo.get_quote(db_conn, us_inst["id"]) is not None
+
+
+def test_sleep_interval_uses_tighter_of_two_markets():
+    from atrsite.services.market_schedule import MarketPhase as MP
+    # KRX 휴장(30분)이어도 미국이 정규장(5분)이면 5분을 써야 한다.
+    assert worker._sleep_seconds_for(MP.HOLIDAY, now=datetime(2026, 8, 5, 22, 45), us_phase=MP.REGULAR) == 300
+    # 둘 다 유휴 상태면 60초.
+    assert worker._sleep_seconds_for(MP.PRE_MARKET, now=datetime(2026, 8, 5, 3, 0), us_phase=MP.PRE_MARKET) == 60
+
+
 def test_run_once_regular_phase_polls_quotes_not_bars(db_conn, monkeypatch):
     monkeypatch.setattr(worker.db, "connect", lambda *a, **kw: _NoCloseConnWrapper(db_conn))
     inst = _make_instrument_with_kis_code(db_conn)
@@ -147,9 +195,9 @@ def test_run_once_only_collects_bars_once_per_day(db_conn, monkeypatch):
     call_count = {"n": 0}
     original = worker.collect_daily_bars_and_update_atr
 
-    def counting(conn):
+    def counting(conn, *, market_group="KRX"):
         call_count["n"] += 1
-        return original(conn)
+        return original(conn, market_group=market_group)
 
     monkeypatch.setattr(worker, "collect_daily_bars_and_update_atr", counting)
 

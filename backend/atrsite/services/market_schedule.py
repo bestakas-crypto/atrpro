@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from enum import Enum
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from .signal_engine import DataStatus
 
@@ -106,6 +107,89 @@ def decide_polling(now: datetime) -> PollingDecision:
     if phase == MarketPhase.PRE_MARKET:
         return PollingDecision(phase, False, False, "개장 전 -- 토큰/거래일 확인만")
     return PollingDecision(phase, False, False, "비거래일")
+
+
+# ---------------------------------------------------------------------------
+# 미국장(NASDAQ/NYSE/AMEX) 폴링 -- 2026-08-07 매매계획(트리거 감시) Phase 1
+# 추가. 위 KRX 로직과 완전히 독립적으로 동작한다(worker.py가 두 결정을
+# 각각 계산해서 각자의 종목군만 폴링한다).
+#
+# 확인된 사실: 이 프로젝트에는 지금까지 미국장 시간대 판정 자체가 전혀
+# 없었다(worker.py의 유일한 폴링 게이트가 KRX 09:00~15:30 뿐이었음) --
+# 즉 QQQ/NVDA/QLD 등은 한국 야간(=미국 정규장 시간)에 자동 폴링된 적이
+# 없고 수동 "주가 갱신" 버튼에만 의존했다. 이 절이 그 공백을 메운다.
+#
+# 서머타임: 직접 날짜를 계산하지 않고 표준 라이브러리 zoneinfo(IANA tz DB
+# "America/New_York")에 위임한다 -- DST 전환일을 손으로 계산하는 것보다
+# 훨씬 안전하다("정교한 달력을 발명하지 말라"는 지시에 따른 최소·안전 구현).
+#
+# 남은 제약(명시): 미국 공휴일 중 "몇째 요일" 규칙(추수감사절=11월 넷째
+# 목요일, 노동절=9월 첫째 월요일, MLK Day, 대통령의 날, 성금요일, 메모리얼
+# 데이, 준틴스 등)은 계산 로직이 없고 MANUAL_US_HOLIDAYS가 비어있다 --
+# 이 날짜들에 실제로는 휴장인데 이 코드는 PRE_MARKET/POST_MARKET으로
+# 오판할 수 있다(폴링 자체는 안 되지만 phase 값이 부정확할 수 있다는
+# 뜻). 배포 전 또는 운영 중 NYSE 공식 휴장일 캘린더를 보고 채워야 한다.
+US_EASTERN = ZoneInfo("America/New_York")
+
+US_REGULAR_OPEN_ET = time(9, 30)
+US_REGULAR_CLOSE_ET = time(16, 0)
+
+# 고정일 공휴일만(연도 무관 반복). "몇째 요일" 규칙 공휴일은 위 주석 참고.
+US_FIXED_HOLIDAYS_MM_DD = {
+    (1, 1),   # New Year's Day
+    (6, 19),  # Juneteenth (2021년 연방공휴일 지정, 고정일이라 여기 포함 가능)
+    (7, 4),   # Independence Day
+    (12, 25),  # Christmas
+}
+
+# 추수감사절/노동절/MLK Day 등 "몇째 요일" 규칙 + 임시휴장은 직접 채워야
+# 한다(형식: date(YYYY, MM, DD)).
+MANUAL_US_HOLIDAYS: set[date] = set()
+
+US_MARKET_CODES = {"NAS", "NYS", "AMS"}
+
+
+def is_us_listed(kis_market: Optional[str]) -> bool:
+    return bool(kis_market) and kis_market.upper() in US_MARKET_CODES
+
+
+def is_us_trading_day(d: date) -> bool:
+    if d.weekday() >= 5:
+        return False
+    if (d.month, d.day) in US_FIXED_HOLIDAYS_MM_DD:
+        return False
+    if d in MANUAL_US_HOLIDAYS:
+        return False
+    return True
+
+
+def determine_us_market_phase(now: datetime) -> MarketPhase:
+    """now는 timezone-aware(권장) 또는 naive(UTC로 간주)여도 된다 -- 내부에서
+    zoneinfo로 America/New_York 현지시각으로 변환해서 판정한다."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    et_now = now.astimezone(US_EASTERN)
+    d = et_now.date()
+    if not is_us_trading_day(d):
+        return MarketPhase.HOLIDAY
+    t = et_now.time()
+    if t < US_REGULAR_OPEN_ET:
+        return MarketPhase.PRE_MARKET
+    if t <= US_REGULAR_CLOSE_ET:
+        return MarketPhase.REGULAR
+    return MarketPhase.POST_MARKET
+
+
+def decide_us_polling(now: datetime) -> PollingDecision:
+    """KRX decide_polling()과 동일한 결정표를 미국장 시간대에 적용한다."""
+    phase = determine_us_market_phase(now)
+    if phase == MarketPhase.REGULAR:
+        return PollingDecision(phase, True, False, "미국 정규장 -- 5분 폴링")
+    if phase == MarketPhase.POST_MARKET:
+        return PollingDecision(phase, False, True, "미국 마감 후 -- 확정 일봉 수집")
+    if phase == MarketPhase.PRE_MARKET:
+        return PollingDecision(phase, False, False, "미국 개장 전")
+    return PollingDecision(phase, False, False, "미국 비거래일")
 
 
 def compute_data_status(

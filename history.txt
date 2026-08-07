@@ -1698,3 +1698,98 @@ service-worker.js CACHE_NAME v18->v19.
 
 전체 회귀 373개 통과(기존 365개 + 이번 신규 8개: 신호소실 5개 + restore_check
 3개). main에 직접 커밋 후 실서버 배포.
+
+--------------------------------------------------------------------
+[매매계획(트리거 감시) 기능 Phase 1 -- TRAIL만] (2026-08-07)
+--------------------------------------------------------------------
+
+사용자가 여러 세션에 걸쳐 GPT/Claude와 논의해서 확정한 설계: "사용자가
+트리거 가격·매도단계를 직접(또는 외부 LLM과 상의해서) 정하고, ATRsite는
+타당성을 판단하지 않고 그 계획을 그대로 저장해서 감시·알림만 한다."
+기존 ATR 기반 매수/손절/익절 신호(signal_engine.py)와는 완전히 독립된
+별도 신호 트랙으로 구현했다. 자세한 설계 근거는 PLAN_trade_trigger_v1.md
+참고.
+
+구현 범위(Phase 1 = TRAIL 유형만, ACCUMULATE/LIQUIDATE_NOW/NONE과
+VXN 조건부 적립·자동 재진입·매크로 자동점수·SMA200은 이번 범위 밖):
+
+1) DB 스키마 5개 신규(trade_plans/trade_plan_instruments/trade_plan_tiers/
+   trade_plan_history/trade_plan_notification_outbox). baseline_quantity는
+   계좌(instrument)별로 저장 -- KODEX 200처럼 같은 상품이 여러 계좌에
+   나뉜 경우도 계좌별 정확한 권고수량을 낼 수 있게 함. 계획 확정 시점
+   수량을 스냅샷으로 고정해서, 이후 VXN 적립 등으로 실보유수량이 늘어도
+   매도 목표수량은 안 바뀐다(QQQ 717달러 계획에서 실제로 나온 요구사항).
+
+2) services/trade_plan_engine.py -- signal_engine.py와 동일한 순수함수
+   스타일. ARMED(접근알림 1회, 계획 설정 전 최고가 절대 소급 안 함)
+   -> ACTIVE(트리거 도달 순간의 관측값이 최초 peak) -> 장중 이탈은 예비
+   알림만, confirm_mode=CLOSE 확정 종가만 tier 발동 -> PARTIALLY_FIRED/
+   COMPLETED(발동 tier의 sell_pct 누적이 100%에 도달했는지로 판정, "tier
+   행이 남았는가"가 아님). 데이터장애(STALE/API_ERROR/가격<=0) 시
+   2026-08-06 신호소실 방지와 동일 원칙으로 기존 상태를 절대 안 바꾼다.
+   갭 하락으로 여러 tier가 한 사이클에 동시 발동하면 전부 같이 발동시킨다.
+   계좌별 매도수량은 최대잔여법(largest remainder)으로 반올림해서 총합이
+   목표수량과 정확히 일치하게 계산(QQQ 427주 40%=171주, KODEX 200
+   908+367주 1차 40%=363+147=510주, 2차 잔여 전량=545+220=765주 -- 전부
+   확정된 실제 계획값으로 회귀 테스트).
+
+3) 미국장(NASDAQ/AMEX) 폴링 경로 신규. 조사 중 실제 결함을 하나 발견:
+   worker.py의 유일한 폴링 게이트가 KRX 09:00~15:30 하나뿐이라 QQQ/NVDA/
+   QLD 등 미국 상장 종목이 한국 야간(=실제 미국 정규장 시간)에 자동
+   폴링된 적이 한 번도 없었다(지금까지 수동 "주가 갱신" 버튼에만 의존).
+   market_schedule.py에 determine_us_market_phase()/decide_us_polling()을
+   추가해서 고쳤다. 서머타임은 직접 날짜를 계산하지 않고 표준 라이브러리
+   zoneinfo(IANA tz DB "America/New_York")에 위임(여름/겨울 둘 다 실제
+   검증). worker.py는 poll_quotes()/collect_daily_bars_and_update_atr()에
+   market_group 필터를 추가해 KRX/미국 종목군을 분리 폴링하고, 잠자는
+   간격도 두 시장 중 더 촘촘한 쪽을 따른다. 남은 제약: 추수감사절 등
+   "몇째 요일" 규칙 미국 공휴일은 MANUAL_US_HOLIDAYS가 비어있어 아직
+   못 채웠다(고정일만 반영됨).
+
+4) services/trade_plan_service.py -- 오케스트레이션. 같은 run_once() 사이클
+   안에서 poll_quotes()가 이미 갱신한 quote_latest를 그대로 읽고(추가 KIS
+   호출 없음), confirm_mode=CLOSE 확정 종가만 예외로 get_daily_bars()를
+   좁은 범위로 조회(그것도 tier 후보선을 실제로 건드렸을 때만). 실제
+   보유수량이 권고수량보다 부족하면 "직접 확인하세요" 경고를 자동으로
+   덧붙인다(체결 추정 안 함). 알림 Outbox는 schedule_notification_outbox와
+   동일한 재시도/멱등 패턴을 복제한 trade_plan_notification_outbox 신규
+   테이블.
+
+5) API 라우터(GET/POST/PATCH/DELETE+history, deposits.py와 동일한 얇은
+   패턴)와 독립 페이지 trade-plans.html(withdrawals.html 패턴) +
+   종목상세 요약카드(index.html). DELETE는 애초에 body를 넘기도록
+   설계했다가, 이 프로젝트가 쓰는 TestClient 자체가 DELETE에 body를
+   못 보낸다는 걸 테스트 중 발견해서 쿼리파라미터(?reason=)로 바꿨다
+   (실제 HTTP 클라이언트 호환성 문제라 이렇게 고치는 게 맞다고 판단).
+   XSS는 격리 미리보기에서 <img src=x onerror=alert(1)>과 <script> 페이로드
+   둘 다 라벨/사유 필드에 넣어 이스케이프 확인(escapeText/textContent
+   둘 다 사용). service-worker.js 캐시 v19->v20.
+
+작업 중 발견해서 직접 고친 실제 버그 3건(전부 pytest로 재현·수정 확인):
+  a) 완료(COMPLETED) 판정을 "tier 행이 남았는가"로 짰다가, QQQ처럼 2차
+     tier가 아직 계획에 없는 상태에서 1차(40%)만 발동해도 즉시 COMPLETED가
+     되어버림 -- "발동된 sell_pct 누적이 100%인가"로 고쳐서 QQQ가
+     PARTIALLY_FIRED로 남고 잔여 60%를 계속 보유한 것으로 취급하게 함.
+  b) 갭 하락으로 여러 tier가 동시 발동할 때 텔레그램 알림을 tier별로
+     따로 만들다가, 계좌별 매도수량을 각 tier마다 독립적으로(baseline
+     기준 처음부터) 계산해서 합산하면 이중계산되는 것을 발견(KODEX 200
+     테스트에서 908주가 1816주로 부풀어 나옴) -- already_recommended를
+     tier_order 순서대로 체이닝하도록 고치고, 알림도 tier별로 쪼개지 않고
+     한 건으로 합치도록 수정(프롬프트 4.4 요구사항과도 일치).
+  c) 이 프로젝트 dev .env에 실제 KIS 자격증명이 들어있어서(test_worker.py
+     가 이미 알고 있던 문제), 신규 테스트 파일에 동일한 더미모드 강제
+     autouse 픽스처를 빠뜨렸더니 worker.run_once() 테스트가 실제
+     openapi.koreainvestment.com에 403을 맞는 걸 실제로 확인 -- 즉시
+     test_worker.py와 동일한 픽스처(force_kis_dummy_mode/
+     force_telegram_dummy_mode/데일리바 상태 리셋)를 추가해서 막음.
+
+테스트: 신규 4개 파일 52개(엔진 25 + 리포지토리 10 + 오케스트레이션 9 +
+API 8) + 기존 test_worker.py에 미국장 관련 4개 추가 = 총 56개 신규. 격리
+로컬 미리보기(uvicorn, scratch DB)에서 계획 생성/조회/취소/이력조회/XSS
+방어/종목상세 요약카드까지 브라우저로 실제 조작해서 확인. 전체 회귀
+373 -> 429개 통과.
+
+QQQ(717달러, baseline 427주, 1차 -1.25%/40%=171주, 2차 미확정)와 KODEX 200
+(115,000원, 908+367주 합산, 1차 -2.5%/40%=510주, 2차 -6.0%/잔여=765주) 실제
+계획값은 코드에 반영·테스트했지만, 배포 후 화면에서 사용자가 직접 확인한
+뒤에만 실제 DB에 등록한다(자동 등록 안 함).
