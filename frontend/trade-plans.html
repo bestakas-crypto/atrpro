@@ -43,82 +43,131 @@
 
 </main>
 
-<!-- 계획 생성 모달 -->
+<!-- 계획 생성 모달 -- 2026-08-08 frontend/trade-plans.html 단순화 개편:
+     기본화면은 "대표 종목/트리거 가격/매도 단계/저장" 4영역만 노출하고,
+     기존 세부 입력항목(계획이름 직접수정/트리거방향/확인방식/연결계좌
+     수정/목적/무효화조건/재검토일/설정이유)은 삭제하지 않고 상세설정
+     접기영역으로 이동했다. -->
 <div id="modal-plan" class="modal-overlay" hidden>
   <div class="modal-box">
-    <h3>매매계획 추가 (TRAIL)</h3>
+    <h3>매매계획 추가</h3>
+    <p class="tp-modal-intro">
+      대표 종목의 가격을 감시해 사용자가 정한 시점에 매도 의견을 알려드려요.<br />
+      실제 매매는 사용자가 증권사에서 직접 실행합니다.
+    </p>
 
+    <!-- 1. 대표 종목 -->
     <div class="field-group">
-      <label for="plan-label">계획 이름</label>
-      <input id="plan-label" type="text" maxlength="100" placeholder="예: QQQ 기존물량 1차 부분익절" />
+      <label for="plan-instrument-picker">대표 종목</label>
+      <select id="plan-instrument-picker"></select>
+
+      <div id="single-instrument-info" class="tp-info-box" hidden>
+        <div>현재 보유: <span id="info-holding-qty"></span></div>
+        <div>기준수량: <span id="info-baseline-qty"></span></div>
+        <div>현재가: <span id="info-current-price"></span></div>
+      </div>
+
+      <div id="linked-accounts-box" class="tp-info-box" hidden>
+        <div>현재 보유: 총 <span id="linked-total-qty"></span></div>
+        <div>연결 계좌: <span id="linked-account-count"></span>개</div>
+        <button id="btn-toggle-linked-accounts" type="button" class="tp-link-toggle">계좌별 수량 보기 ▾</button>
+        <div id="linked-accounts-detail" class="tp-linked-detail" hidden></div>
+      </div>
+
+      <p id="instrument-link-note" class="field-hint"></p>
+      <p id="duplicate-plan-warning" class="tp-duplicate-warning" hidden>
+        이미 감시 중인 계획이 있어요.<br />기존 계획을 먼저 확인하거나 수정해주세요.
+      </p>
     </div>
 
-    <div class="field-row">
+    <!-- 나머지 입력 영역: 중복계획이 없을 때만 표시 -->
+    <div id="plan-form-body" hidden>
+
+      <!-- 2. 트리거 가격 -->
       <div class="field-group">
         <label for="plan-trigger-price">트리거 가격</label>
-        <input id="plan-trigger-price" type="number" inputmode="decimal" min="0" step="0.01" />
+        <div class="tp-trigger-input-row">
+          <input id="plan-trigger-price" type="number" inputmode="decimal" min="0.01" step="any" />
+          <span id="trigger-currency-unit" class="tp-unit"></span>
+        </div>
+        <p id="trigger-hint" class="field-hint"></p>
       </div>
+
+      <!-- 3. 매도 단계 -->
       <div class="field-group">
-        <label for="plan-trigger-direction">트리거 방향</label>
-        <select id="plan-trigger-direction">
-          <option value="ABOVE">이상 도달(상향 돌파)</option>
-          <option value="BELOW">이하 도달(하향 돌파)</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="field-group">
-      <label for="plan-confirm-mode">발동 확인 기준</label>
-      <select id="plan-confirm-mode">
-        <option value="CLOSE">종가 확정(권장 -- 장중 흔들림 무시)</option>
-        <option value="INTRADAY">장중가 즉시</option>
-      </select>
-    </div>
-
-    <div class="field-group">
-      <label for="plan-reference">대표 가격 종목</label>
-      <select id="plan-reference"></select>
-      <p class="field-hint">연결 종목이 여러 개(같은 상품, 다른 계좌)라도 가격은 이 종목 하나로만 조회합니다.</p>
-    </div>
-
-    <div class="field-group">
-      <div class="field-group-header">
-        <label>연결 종목 / 계획 확정 시점 수량(baseline)</label>
-        <button id="btn-add-instrument-row" type="button" class="btn btn-secondary btn-small">+ 계좌 추가</button>
-      </div>
-      <div id="instrument-rows"></div>
-      <p class="field-hint">여기 입력한 수량은 이후 적립매수 등으로 실보유수량이 늘어도 바뀌지 않습니다.</p>
-    </div>
-
-    <div class="field-group">
-      <div class="field-group-header">
         <label>매도 단계</label>
-        <button id="btn-add-tier-row" type="button" class="btn btn-secondary btn-small">+ 단계 추가</button>
+        <div id="simple-tier-rows"></div>
+        <button id="btn-add-simple-tier" type="button" class="btn btn-secondary btn-small">+ 단계 추가</button>
+        <p id="tier-total-summary" class="tp-tier-total"></p>
       </div>
-      <div id="tier-rows"></div>
-      <p class="field-hint">단계별 매도비율(sell_pct)의 합은 100% 이하여야 합니다. 마지막 단계 누적이 100%면 전량 청산으로 처리됩니다.</p>
-    </div>
 
-    <div class="field-group">
-      <label for="plan-purpose">계획 목적</label>
-      <input id="plan-purpose" type="text" maxlength="200" placeholder="예: 일부 현금화 / 최종 종료 / 재매수 준비" />
-    </div>
-    <div class="field-group">
-      <label for="plan-invalidation">무효화 조건 (선택)</label>
-      <input id="plan-invalidation" type="text" maxlength="200" />
-    </div>
-    <div class="field-group">
-      <label for="plan-review-date">재검토일 (선택)</label>
-      <input id="plan-review-date" type="date" />
-    </div>
-    <div class="field-group">
-      <label for="plan-reason">설정 이유</label>
-      <textarea id="plan-reason" maxlength="1000" placeholder="LLM 토론 후 최종 판단 요약"></textarea>
-    </div>
+      <button id="btn-toggle-advanced" type="button" class="tp-advanced-toggle">상세설정 펼치기 ▾</button>
 
-    <div class="modal-actions">
-      <button id="btn-plan-cancel" class="btn btn-secondary btn-block">취소</button>
-      <button id="btn-plan-save" class="btn btn-primary btn-block">저장</button>
+      <!-- 상세설정(접힘) -- 기존 v1 입력항목을 그대로 보존한 영역.
+           일반 사용자는 이 영역을 열지 않아도 저장할 수 있다. -->
+      <div id="advanced-settings" hidden>
+        <div class="field-group">
+          <label for="plan-label">계획 이름</label>
+          <input id="plan-label" type="text" maxlength="100" placeholder="비워두면 자동으로 만들어져요" />
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label for="plan-trigger-direction">트리거 방향</label>
+            <select id="plan-trigger-direction">
+              <option value="ABOVE">이상 도달(상향 돌파)</option>
+              <option value="BELOW">이하 도달(하향 돌파)</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="plan-confirm-mode">발동 확인 기준</label>
+            <select id="plan-confirm-mode">
+              <option value="CLOSE">종가 확정(권장)</option>
+              <option value="INTRADAY">장중가 즉시</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label for="plan-reference">가격 대표 종목</label>
+          <select id="plan-reference"></select>
+          <p class="field-hint">연결 계좌가 여러 개라도 가격은 이 종목 하나로만 조회해요.</p>
+        </div>
+
+        <div class="field-group">
+          <div class="field-group-header">
+            <label>연결 종목 / 기준수량(baseline) 직접 확인·수정</label>
+            <button id="btn-add-instrument-row" type="button" class="btn btn-secondary btn-small">+ 계좌 추가</button>
+          </div>
+          <div id="instrument-rows"></div>
+          <p class="field-hint">여기 입력한 수량은 이후 적립매수 등으로 실보유수량이 늘어도 바뀌지 않아요.</p>
+        </div>
+
+        <div class="field-group">
+          <label for="plan-purpose">계획 목적</label>
+          <input id="plan-purpose" type="text" maxlength="200" placeholder="예: 일부 현금화 / 최종 종료 / 재매수 준비" />
+        </div>
+        <div class="field-group">
+          <label for="plan-invalidation">무효화 조건 (선택)</label>
+          <input id="plan-invalidation" type="text" maxlength="200" />
+        </div>
+        <div class="field-group">
+          <label for="plan-review-date">재검토일 (선택)</label>
+          <input id="plan-review-date" type="date" />
+        </div>
+        <div class="field-group">
+          <label for="plan-reason">설정 이유</label>
+          <textarea id="plan-reason" maxlength="1000" placeholder="LLM 토론 후 최종 판단 요약"></textarea>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-plan-cancel" class="btn btn-secondary btn-block">취소</button>
+        <button id="btn-plan-save" class="btn btn-primary btn-block">저장</button>
+      </div>
+
+      <p class="tp-disclaimer">
+        ATRsite는 매매 의견만 알려드려요. 실제 주문은 사용자가 증권사에서 직접 실행합니다.
+      </p>
     </div>
   </div>
 </div>
