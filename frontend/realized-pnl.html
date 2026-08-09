@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>확정손익</title>
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/realized-pnl.css" />
+</head>
+<body>
+
+<div class="rp-toolbar">
+  <button id="btn-close" class="btn btn-secondary" aria-label="닫기">← 닫기</button>
+  <span class="rp-toolbar-title">확정손익</span>
+</div>
+
+<main id="rp-root">
+  <section class="rp-panel">
+    <h1>기간별 확정손익</h1>
+    <div class="rp-range-grid">
+      <label>시작일<input type="date" id="start-date" /></label>
+      <label>종료일<input type="date" id="end-date" /></label>
+      <label>표시통화<input type="text" id="base-currency" placeholder="기본 설정 통화" maxlength="3" /></label>
+      <button id="btn-load" class="btn btn-primary">조회</button>
+    </div>
+    <div class="rp-quick-row">
+      <button class="rp-chip" data-range="this-month">이번달</button>
+      <button class="rp-chip" data-range="last-month">지난달</button>
+      <button class="rp-chip" data-range="this-year">올해</button>
+    </div>
+  </section>
+
+  <section class="rp-summary-card">
+    <div class="label">조회기간 확정손익 합계</div>
+    <div id="total-pnl" class="value big">-</div>
+    <div id="summary-meta" class="meta"></div>
+  </section>
+
+  <section class="rp-panel">
+    <h2>종목별 내역</h2>
+    <div id="items"></div>
+    <p id="empty" class="rp-empty" hidden>이 기간에는 확정된 손익이 없습니다.</p>
+  </section>
+
+  <p class="rp-note">환산은 조회 시점 환율 기준입니다. 매도 시점 환율이 아닙니다.</p>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="js/realized-pnl.js"></script>
+</body>
+</html>
