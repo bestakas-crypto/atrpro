@@ -176,4 +176,6 @@ export const api = {
   getSnapshot: (snapshotDate) => request('GET', `/api/v1/portfolio-snapshots/${snapshotDate}`),
   getSnapshotItems: (snapshotDate) => request('GET', `/api/v1/portfolio-snapshots/${snapshotDate}/items`),
   runSnapshotNow: () => request('POST', '/api/v1/portfolio-snapshots/run'),
+
+  getRealizedPnl: (query) => request('GET', `/api/v1/realized-pnl?${new URLSearchParams(query || {}).toString()}`),
 };
