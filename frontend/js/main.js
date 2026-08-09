@@ -114,7 +114,7 @@ function renderListView() {
   el.viewList.hidden = false;
   el.viewDetail.hidden = true;
   el.stickyActions.hidden = true;
-  el.headerTitle.textContent = 'ATRsite-pro';
+  el.headerTitle.textContent = '';
   loadAndRenderList(ctx);
 }
 
