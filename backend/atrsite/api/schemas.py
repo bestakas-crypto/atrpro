@@ -82,6 +82,8 @@ class WithdrawalCreate(BaseModel):
     purpose: str = Field(min_length=1)
     amount: float = Field(gt=0)
     currency: str = Field(min_length=1)
+    # v1.4(2026-08-12) -- 기본값 EXTERNAL(자산 총액에서 실제로 빠지는 소비).
+    flow_type: str = "EXTERNAL"
     memo: Optional[str] = None
 
 
@@ -91,6 +93,29 @@ class WithdrawalUpdate(BaseModel):
     purpose: Optional[str] = None
     amount: Optional[float] = Field(default=None, gt=0)
     currency: Optional[str] = None
+    flow_type: Optional[str] = None
+    memo: Optional[str] = None
+
+
+# backend/atrsite/api/schemas.py -- v1.4 현금 입금기록(analyze.kunoh.top 1단계,
+# 2026-08-12 추가). WithdrawalCreate/Update의 정반대 짝(purpose -> source).
+class CashInflowCreate(BaseModel):
+    deposited_at: str = Field(min_length=1)
+    deposit_account_id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    amount: float = Field(gt=0)
+    currency: str = Field(min_length=1)
+    flow_type: str = "EXTERNAL"
+    memo: Optional[str] = None
+
+
+class CashInflowUpdate(BaseModel):
+    deposited_at: Optional[str] = None
+    deposit_account_id: Optional[str] = None
+    source: Optional[str] = None
+    amount: Optional[float] = Field(default=None, gt=0)
+    currency: Optional[str] = None
+    flow_type: Optional[str] = None
     memo: Optional[str] = None
 
 

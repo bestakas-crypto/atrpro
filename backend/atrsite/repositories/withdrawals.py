@@ -21,6 +21,8 @@ from ..utils import new_id, utcnow_iso
 
 SUPPORTED_CURRENCIES = ("KRW", "USD", "JPY")
 MAX_PURPOSE_LENGTH = 100
+# v1.4(2026-08-12) analyze.kunoh.top 1단계 -- cash_inflows.py의 SUPPORTED_FLOW_TYPES와 동일.
+SUPPORTED_FLOW_TYPES = ("EXTERNAL", "INTERNAL_TRANSFER")
 
 
 class WithdrawalValidationError(ValueError):
@@ -37,6 +39,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "amount": row["amount"],
         "currency": row["currency"],
         "memo": row["memo"],
+        # v1.4 -- flow_type 컬럼이 없는 DB(마이그레이션 전)에서도 죽지 않게 기본값.
+        "flow_type": row["flow_type"] if "flow_type" in row.keys() else "EXTERNAL",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         # 스펙 9.5 "수정됨" 표시 -- edited 컬럼(명시적 플래그)으로 판단한다.
@@ -70,6 +74,14 @@ def _validate_currency(currency: str) -> str:
     return currency
 
 
+def _validate_flow_type(flow_type: str) -> str:
+    if flow_type not in SUPPORTED_FLOW_TYPES:
+        raise WithdrawalValidationError(
+            f"지원하지 않는 flow_type입니다: {flow_type} (지원: {', '.join(SUPPORTED_FLOW_TYPES)})"
+        )
+    return flow_type
+
+
 def _validate_withdrawn_at(withdrawn_at: str) -> str:
     """'YYYY-MM-DDTHH:MM' 또는 'YYYY-MM-DDTHH:MM:SS' 형식만 허용 -- datetime-local
     input이 그대로 오는 형태. 초가 없으면 :00을 붙여 통일한다."""
@@ -91,6 +103,7 @@ def create_withdrawal(
     purpose: str,
     amount: float,
     currency: str,
+    flow_type: str = "EXTERNAL",
     memo: str | None = None,
 ) -> dict[str, Any]:
     deposit = conn.execute(
@@ -105,8 +118,8 @@ def create_withdrawal(
         """
         INSERT INTO cash_withdrawals
             (id, withdrawn_at, deposit_account_id, account_name_snapshot, purpose,
-             amount, currency, memo, edited, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+             amount, currency, memo, flow_type, edited, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         """,
         (
             withdrawal_id,
@@ -117,6 +130,7 @@ def create_withdrawal(
             _validate_amount(amount),
             _validate_currency(currency),
             (memo or "").strip() or None,
+            _validate_flow_type(flow_type),
             now,
             now,
         ),
@@ -136,6 +150,7 @@ class WithdrawalFilter:
     purpose: Optional[str] = None     # 부분일치, 대소문자 무시
     deposit_account_id: Optional[str] = None
     currency: Optional[str] = None
+    flow_type: Optional[str] = None  # v1.4 -- EXTERNAL/INTERNAL_TRANSFER로 순입금 계산 시 필터링용
 
 
 def _apply_filters(where: list[str], params: list[Any], f: WithdrawalFilter) -> None:
@@ -162,6 +177,9 @@ def _apply_filters(where: list[str], params: list[Any], f: WithdrawalFilter) -> 
     if f.currency:
         where.append("currency = ?")
         params.append(f.currency)
+    if f.flow_type:
+        where.append("flow_type = ?")
+        params.append(f.flow_type)
 
 
 def list_withdrawals(
@@ -334,6 +352,7 @@ def update_withdrawal(
     purpose: str | None = None,
     amount: float | None = None,
     currency: str | None = None,
+    flow_type: str | None = None,
     memo: str | None = None,  # None=유지, ""(빈 문자열)=메모 지우기 -- deposits.py 등과 같은 관례.
 ) -> dict[str, Any] | None:
     current = get_withdrawal(conn, withdrawal_id)
@@ -356,7 +375,7 @@ def update_withdrawal(
         """
         UPDATE cash_withdrawals SET
             withdrawn_at = ?, deposit_account_id = ?, account_name_snapshot = ?,
-            purpose = ?, amount = ?, currency = ?, memo = ?, edited = 1, updated_at = ?
+            purpose = ?, amount = ?, currency = ?, flow_type = ?, memo = ?, edited = 1, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -366,6 +385,7 @@ def update_withdrawal(
             _validate_purpose(purpose) if purpose is not None else current["purpose"],
             _validate_amount(amount) if amount is not None else current["amount"],
             _validate_currency(currency) if currency is not None else current["currency"],
+            _validate_flow_type(flow_type) if flow_type is not None else current["flow_type"],
             current["memo"] if memo is None else (memo.strip() or None),
             now,
             withdrawal_id,

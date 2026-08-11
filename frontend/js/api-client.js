@@ -150,6 +150,23 @@ export const api = {
     return res.blob();
   },
 
+  // js/api-client.js -- v1.4 현금 입금기록(analyze.kunoh.top 1단계, 2026-08-12
+  // 추가). withdrawals와 정반대 짝, 동일한 패턴.
+  listCashInflows: (query) => request('GET', `/api/v1/cash-inflows?${new URLSearchParams(query).toString()}`),
+  getCashInflowsSummary: () => request('GET', '/api/v1/cash-inflows/summary'),
+  getRecentSources: () => request('GET', '/api/v1/cash-inflows/sources'),
+  createCashInflow: (body) => request('POST', '/api/v1/cash-inflows', body),
+  updateCashInflow: (id, body) => request('PATCH', `/api/v1/cash-inflows/${id}`, body),
+  deleteCashInflow: (id) => request('DELETE', `/api/v1/cash-inflows/${id}`),
+  checkCashInflowDuplicate: (body) => request('POST', '/api/v1/cash-inflows/check-duplicate', body),
+  exportCashInflowsCsv: async (query) => {
+    const apiKey = getStoredApiKey();
+    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
+    const res = await fetch(`/api/v1/cash-inflows/export.csv?${new URLSearchParams(query).toString()}`, { headers });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return res.blob();
+  },
+
   // js/api-client.js -- v1.2 통합 투자 스케줄 및 예약알림(2026-08-05 추가).
   listInvestmentPlans: (status) => request('GET', `/api/v1/investment-plans${status ? `?status=${status}` : ''}`),
   createInvestmentPlan: (body) => request('POST', '/api/v1/investment-plans', body),
