@@ -131,38 +131,21 @@ export const api = {
   getCompanyAnalysis: (requestId) => request('GET', `/api/v1/company-analysis/${requestId}`),
   listRecentCompanyAnalyses: () => request('GET', '/api/v1/company-analysis/recent'),
 
-  // js/api-client.js -- v1.1 현금 출금기록(2026-08-05 추가).
-  listWithdrawals: (query) => request('GET', `/api/v1/withdrawals?${new URLSearchParams(query).toString()}`),
-  getWithdrawalsSummary: () => request('GET', '/api/v1/withdrawals/summary'),
-  getRecentPurposes: () => request('GET', '/api/v1/withdrawals/purposes'),
-  createWithdrawal: (body) => request('POST', '/api/v1/withdrawals', body),
-  updateWithdrawal: (id, body) => request('PATCH', `/api/v1/withdrawals/${id}`, body),
-  deleteWithdrawal: (id) => request('DELETE', `/api/v1/withdrawals/${id}`),
-  checkWithdrawalDuplicate: (body) => request('POST', '/api/v1/withdrawals/check-duplicate', body),
+  // js/api-client.js -- v1.5 입출금 통합 장부(2026-08-12 재작성). 옛
+  // v1.1 출금기록 + v1.4 입금기록을 하나로 합침(카드/소비 분석은
+  // card-kunoh/Kunoh's Sheet로 이관, 사용자 2026-08-12).
+  listCashLedger: (query) => request('GET', `/api/v1/cash-ledger?${new URLSearchParams(query).toString()}`),
+  getCashLedgerSummary: () => request('GET', '/api/v1/cash-ledger/summary'),
+  createCashLedgerEntry: (body) => request('POST', '/api/v1/cash-ledger', body),
+  updateCashLedgerEntry: (id, body) => request('PATCH', `/api/v1/cash-ledger/${id}`, body),
+  deleteCashLedgerEntry: (id) => request('DELETE', `/api/v1/cash-ledger/${id}`),
   // CSV는 JSON이 아니라 파일 다운로드라 request()의 공용 JSON 파싱 경로를
   // 안 쓰고 직접 fetch한다 -- API 키가 설정된 배포에서도 인증 헤더가 필요해서
   // (<a href>만으로는 헤더를 못 보냄) Blob으로 받아 임시 링크로 다운로드시킨다.
-  exportWithdrawalsCsv: async (query) => {
+  exportCashLedgerCsv: async (query) => {
     const apiKey = getStoredApiKey();
     const headers = apiKey ? { 'X-API-Key': apiKey } : {};
-    const res = await fetch(`/api/v1/withdrawals/export.csv?${new URLSearchParams(query).toString()}`, { headers });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
-    return res.blob();
-  },
-
-  // js/api-client.js -- v1.4 현금 입금기록(analyze.kunoh.top 1단계, 2026-08-12
-  // 추가). withdrawals와 정반대 짝, 동일한 패턴.
-  listCashInflows: (query) => request('GET', `/api/v1/cash-inflows?${new URLSearchParams(query).toString()}`),
-  getCashInflowsSummary: () => request('GET', '/api/v1/cash-inflows/summary'),
-  getRecentSources: () => request('GET', '/api/v1/cash-inflows/sources'),
-  createCashInflow: (body) => request('POST', '/api/v1/cash-inflows', body),
-  updateCashInflow: (id, body) => request('PATCH', `/api/v1/cash-inflows/${id}`, body),
-  deleteCashInflow: (id) => request('DELETE', `/api/v1/cash-inflows/${id}`),
-  checkCashInflowDuplicate: (body) => request('POST', '/api/v1/cash-inflows/check-duplicate', body),
-  exportCashInflowsCsv: async (query) => {
-    const apiKey = getStoredApiKey();
-    const headers = apiKey ? { 'X-API-Key': apiKey } : {};
-    const res = await fetch(`/api/v1/cash-inflows/export.csv?${new URLSearchParams(query).toString()}`, { headers });
+    const res = await fetch(`/api/v1/cash-ledger/export.csv?${new URLSearchParams(query).toString()}`, { headers });
     if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.blob();
   },

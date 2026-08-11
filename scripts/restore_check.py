@@ -41,10 +41,13 @@ CORE_TABLES = [
     "companies", "company_identifiers", "company_filings",
     "company_financial_periods", "company_financial_metrics",
     "company_analysis_requests", "company_analysis_results",
-    # v1.1 -- 현금 출금기록
-    "cash_withdrawals",
-    # v1.4 -- 현금 입금기록(analyze.kunoh.top 1단계)
-    "cash_inflows",
+    # v1.1/v1.4 -- 옛 출금기록/입금기록 테이블(v1.5에서 cash_ledger로 통합됨,
+    # 원본 보존용으로 삭제하지 않아 계속 존재 -- db.py의
+    # _migrate_legacy_cash_records 참고). 신규 데이터는 더 안 쌓이지만
+    # 과거 기록은 여전히 이 테이블들에 있으므로 restore 검증 대상에 남긴다.
+    "cash_withdrawals", "cash_inflows",
+    # v1.5 -- 입출금 통합 장부(analyze.kunoh.top 1단계)
+    "cash_ledger",
     # v1.2 -- 통합 투자 스케줄 및 예약알림
     "investment_plans", "investment_plan_items",
     "investment_schedules", "investment_schedule_items",

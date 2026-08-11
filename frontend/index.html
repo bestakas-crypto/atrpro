@@ -26,15 +26,11 @@
   <div class="header-nav">
     <!-- v1.1(2026-08-05): 뒤로가기/앞으로가기/새로고침 앱 내부 버튼 제거(스펙 2.1
          -- 브라우저 자체 뒤로가기/Edge 제스처는 그대로 살아있음, 이건 앱이 직접
-         그리던 아이콘만 뺀 것). 새로고침이 있던 자리에 출금기록 아이콘 배치(2.2). -->
-    <a id="btn-open-withdrawals" class="icon-btn" aria-label="출금기록" title="출금기록"
+         그리던 아이콘만 뺀 것). 새로고침이 있던 자리에 입출금기록 아이콘 배치(2.2).
+         v1.5(2026-08-12): 출금전용 페이지에 입금까지 합쳐 "입출금기록"으로 -->
+    <a id="btn-open-withdrawals" class="icon-btn" aria-label="입출금기록" title="입출금기록"
        href="withdrawals.html" target="_blank" rel="noopener">
       <span aria-hidden="true">💸</span>
-    </a>
-    <!-- v1.4(2026-08-12): 현금 입금기록(analyze.kunoh.top 1단계 -- 순입금 원장). -->
-    <a id="btn-open-cash-inflows" class="icon-btn" aria-label="입금기록" title="입금기록"
-       href="cash-inflows.html" target="_blank" rel="noopener">
-      <span aria-hidden="true">💰➕</span>
     </a>
     <!-- v1.2(2026-08-05): 통합 투자 스케줄/예약알림. 배지는 badge-count API로
          채우고, 표시할 게 없으면 hidden 유지(main.js refreshScheduleBadge 참고). -->

@@ -135,6 +135,10 @@ body {
 /* 출금액은 지출임을 표시하되 손익 마이너스(--pnl-neg, 빨강)와 혼동되지 않게
    앰버 계열로 구분한다(스펙 8, "손익의 마이너스와 혼동되지 않게"). */
 .wd-card-amount { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; font-weight: 700; color: #a06a0a; white-space: nowrap; }
+/* v1.5(2026-08-12) -- 입출금 통합 후 방향 구분. 손익(pnl-pos/neg, 빨강/파랑
+   또는 파일마다 다름)과도, 기존 출금 앰버와도 안 겹치게 입금은 청록 계열. */
+.wd-amount-in { color: #0f766e; }
+.wd-amount-out { color: #a06a0a; }
 .wd-card-meta { margin-top: 6px; font-size: 12px; color: #838b99; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .wd-card-memo { margin-top: 6px; font-size: 12px; color: #4d5561; }
 .wd-edited-badge {
