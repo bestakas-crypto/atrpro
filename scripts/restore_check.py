@@ -43,6 +43,8 @@ CORE_TABLES = [
     "company_analysis_requests", "company_analysis_results",
     # v1.1 -- 현금 출금기록
     "cash_withdrawals",
+    # v1.4 -- 현금 입금기록(analyze.kunoh.top 1단계)
+    "cash_inflows",
     # v1.2 -- 통합 투자 스케줄 및 예약알림
     "investment_plans", "investment_plan_items",
     "investment_schedules", "investment_schedule_items",

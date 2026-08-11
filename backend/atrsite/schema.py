@@ -334,13 +334,59 @@ DDL_STATEMENTS: list[str] = [
         -- 버그) 명시적 플래그로 스펙 9.5 "수정됨" 표시를 처리한다.
         edited                 INTEGER NOT NULL DEFAULT 0,
         created_at             TEXT NOT NULL,
-        updated_at             TEXT NOT NULL
+        updated_at             TEXT NOT NULL,
+        -- v1.4(2026-08-12) analyze.kunoh.top 연동을 위한 순입금 계산 준비:
+        -- 이 출금이 "외부로 나가는 소비"(EXTERNAL, 자산 총액에서 실제로 빠짐)
+        -- 인지 "내부 계좌 이동"(INTERNAL_TRANSFER, 예: 다른 예금계좌로 이체 --
+        -- 총자산에는 영향 없음)인지 구분한다. 기존 행은 전부 소비 목적으로
+        -- 쓰였다는 스펙 원문 전제("생활비"류 용도)에 따라 기본값 EXTERNAL.
+        -- 신규 DB는 여기서, 이미 운영 중인 DB는 db.py의 _add_column_if_missing로
+        -- 채운다(둘 다 기본값 EXTERNAL이라 결과는 동일).
+        flow_type              TEXT NOT NULL DEFAULT 'EXTERNAL'
+                                CHECK(flow_type IN ('EXTERNAL', 'INTERNAL_TRANSFER'))
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_withdrawn_at ON cash_withdrawals(withdrawn_at)",
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_deposit_account_id ON cash_withdrawals(deposit_account_id)",
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_currency ON cash_withdrawals(currency)",
     "CREATE INDEX IF NOT EXISTS idx_cash_withdrawals_purpose ON cash_withdrawals(purpose)",
+
+    """
+    -- backend/atrsite/schema.py -- v1.4 현금 입금기록(analyze.kunoh.top 1단계,
+    -- 2026-08-12 추가). cash_withdrawals(v1.1)의 정반대 짝 -- 예금(deposits)
+    -- 잔액이 늘어난 "사건"을 기록한다. deposits.amount는 지금까지 현재 잔액만
+    -- 들고 있고 변경 이력이 없어서(순수 스냅샷), "이번 달에 급여 300만원이
+    -- 새로 들어왔다" 같은 걸 시스템이 구분할 방법이 없었다 -- 이게 정확한
+    -- TWR(시간가중수익률)을 지금 당장 계산할 수 없는 근본 원인이었다
+    -- (analyze.kunoh.top 기획 검증 중 확인). 이 테이블이 그 원장 역할을 한다.
+    -- withdrawals와 마찬가지로 deposits/포지션/거래이력을 자동으로 갱신하지
+    -- 않는 완전히 독립적인 기록이다 -- 사용자가 deposits.amount를 직접 늘릴
+    -- 때, 동시에 여기에도 이벤트를 남겨야 뒤에서 순입금을 계산할 수 있다.
+    CREATE TABLE IF NOT EXISTS cash_inflows (
+        id                     TEXT PRIMARY KEY,
+        -- withdrawn_at과 동일한 이유로 Asia/Seoul naive 문자열로 저장.
+        deposited_at           TEXT NOT NULL,
+        deposit_account_id     TEXT REFERENCES deposits(id) ON DELETE SET NULL,
+        account_name_snapshot  TEXT NOT NULL,
+        -- withdrawals의 purpose(용도)에 대응하는 "출처" -- 예: 급여, 상여금, 이체.
+        source                 TEXT NOT NULL,
+        amount                 REAL NOT NULL,
+        currency               TEXT NOT NULL DEFAULT 'KRW',
+        memo                   TEXT,
+        -- 자산 총액에 실제로 새 돈이 들어온 것(EXTERNAL, 예: 급여)인지, 다른
+        -- 계좌/브로커리지에서 옮겨온 내부 이동(INTERNAL_TRANSFER, 총자산 불변)
+        -- 인지 구분 -- 이게 있어야 순입금(EXTERNAL만)을 정확히 걸러 합산한다.
+        flow_type              TEXT NOT NULL DEFAULT 'EXTERNAL'
+                                CHECK(flow_type IN ('EXTERNAL', 'INTERNAL_TRANSFER')),
+        edited                 INTEGER NOT NULL DEFAULT 0,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_cash_inflows_deposited_at ON cash_inflows(deposited_at)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_inflows_deposit_account_id ON cash_inflows(deposit_account_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_inflows_currency ON cash_inflows(currency)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_inflows_source ON cash_inflows(source)",
 
     # ---- v1.2 -- 통합 투자 스케줄 및 예약알림 --------------------------------
     # "계좌" 개념은 이 프로젝트에 별도 테이블이 없다 -- deposits가 사실상 유일한

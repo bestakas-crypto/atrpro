@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .adapters import opendart_client
 from .api.analysis import router as analysis_router
+from .api.cash_flow import router as cash_flow_router
+from .api.cash_inflows import router as cash_inflows_router
 from .api.company import router as company_router
 from .api.dashboard import router as dashboard_router
 from .api.deposits import router as deposits_router
@@ -60,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(trades_router)
     app.include_router(deposits_router)
     app.include_router(withdrawals_router)
+    app.include_router(cash_inflows_router)
+    app.include_router(cash_flow_router)
     app.include_router(plans_router)
     app.include_router(schedules_router)
     app.include_router(occurrences_router)

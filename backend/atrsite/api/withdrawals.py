@@ -38,11 +38,11 @@ router = APIRouter(prefix="/api/v1/withdrawals", tags=["withdrawals"], dependenc
 
 def _filter_from_query(
     start_date: str | None, end_date: str | None, purpose: str | None,
-    deposit_account_id: str | None, currency: str | None,
+    deposit_account_id: str | None, currency: str | None, flow_type: str | None = None,
 ) -> WithdrawalFilter:
     return WithdrawalFilter(
         start_date=start_date, end_date=end_date, purpose=purpose,
-        deposit_account_id=deposit_account_id, currency=currency,
+        deposit_account_id=deposit_account_id, currency=currency, flow_type=flow_type,
     )
 
 
@@ -65,11 +65,12 @@ def export_csv(
     purpose: str | None = None,
     deposit_account_id: str | None = None,
     currency: str | None = None,
+    flow_type: str | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """스펙 9.3 -- 현재 필터 조건 그대로 CSV 내보내기. id/deposit_account_id
     같은 내부 식별자와 API 키는 CSV에 절대 포함하지 않는다(스펙 13 보안)."""
-    f = _filter_from_query(start_date, end_date, purpose, deposit_account_id, currency)
+    f = _filter_from_query(start_date, end_date, purpose, deposit_account_id, currency, flow_type)
     rows = withdrawals_repo.list_all_matching(conn, f)
 
     buf = io.StringIO()
@@ -104,12 +105,13 @@ def list_withdrawals(
     purpose: str | None = None,
     deposit_account_id: str | None = None,
     currency: str | None = None,
+    flow_type: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     sort: str = Query(default="withdrawn_at_desc"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    f = _filter_from_query(start_date, end_date, purpose, deposit_account_id, currency)
+    f = _filter_from_query(start_date, end_date, purpose, deposit_account_id, currency, flow_type)
     sort_desc = sort != "withdrawn_at_asc"
     items, total = withdrawals_repo.list_withdrawals(conn, f, limit=limit, offset=offset, sort_desc=sort_desc)
     # 스펙 5.2/7 -- 목록과 합계를 같은 필터 조건으로, 페이지 무관 전체 기준 계산.
@@ -131,6 +133,7 @@ def create_withdrawal(body: WithdrawalCreate, conn: sqlite3.Connection = Depends
             purpose=body.purpose,
             amount=body.amount,
             currency=body.currency,
+            flow_type=body.flow_type,
             memo=body.memo,
         )
     except WithdrawalValidationError as exc:
@@ -171,6 +174,7 @@ def update_withdrawal(withdrawal_id: str, body: WithdrawalUpdate, conn: sqlite3.
             purpose=body.purpose,
             amount=body.amount,
             currency=body.currency,
+            flow_type=body.flow_type,
             memo=body.memo,
         )
     except WithdrawalValidationError as exc:

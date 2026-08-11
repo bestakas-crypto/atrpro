@@ -54,6 +54,13 @@ def init_db(conn: sqlite3.Connection) -> None:
     # 2026-08-04 추가: NXT 장 반영을 위해 종목별 ETF 여부가 필요해짐(ETF는
     # NXT에 상장되지 않아 항상 KRX 기준으로 조회해야 함).
     _add_column_if_missing(conn, "instruments", "is_etf", "is_etf INTEGER NOT NULL DEFAULT 0")
+    # 2026-08-12 추가(v1.4 현금 입금기록/analyze.kunoh.top 1단계): 이미 운영 중인
+    # DB의 cash_withdrawals에 flow_type을 보충한다. 기본값 EXTERNAL은 신규 CREATE
+    # TABLE과 동일 -- schema.py의 flow_type 주석 참고.
+    _add_column_if_missing(
+        conn, "cash_withdrawals", "flow_type",
+        "flow_type TEXT NOT NULL DEFAULT 'EXTERNAL'",
+    )
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
