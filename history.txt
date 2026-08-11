@@ -1976,3 +1976,60 @@ atrsite-web 재시작 -> health 200 확인 -> 실제 운영 데이터(한투 CMA
 analyze.kunoh.top 자체(별도 프로젝트/도메인, Codex가 코딩 예정)는 아직
 착수 전 -- 이건 그 프로젝트가 읽어갈 데이터 기반만 strpro에 먼저
 마련해둔 것.
+
+[v1.5 -- 출금기록(v1.1)+입금기록(v1.4)을 cash_ledger로 통합] (2026-08-12)
+====================================================================
+사용자가 https://atrsite.kunoh.top/withdrawals.html 을 보고 "원래 카드사용
+이나 내 소비형태와 출금기록에 대해 기록을 남기려고 만든 페이지인데, card와
+sheet에서 따로 사이트가 가동중이니 입출금만 간단한 형태로 입력하고 저장하고
+analyze에 필요한 데이터를 제공하게끔 하자"고 요청. 확인 질문 2개로 방향 확정:
+(1) 하나의 페이지로 통합(기존 withdrawals.html URL/북마크 유지), (2) 핵심만
+남김(일시/계좌/금액/통화/구분/메모, 용도추천칩·계좌별합계펼치기·중복경고는
+제거, 목록/기간필터/CSV는 유지).
+
+feature/cash-ledger-unify 브랜치에서 작업.
+
+**DB**: cash_ledger 테이블 신설. entry_type(EXTERNAL_IN/EXTERNAL_OUT/
+INTERNAL_IN/INTERNAL_OUT) 하나로 "방향(입금/출금)"과 "성격(외부/내부이체)"을
+동시에 표현 -- analyze.kunoh.top의 순외부현금흐름 계산은 EXTERNAL_*만 걸러
+부호 그대로 합산하면 됨. db.py에 cash_withdrawals(v1.1)+cash_inflows(v1.4)를
+cash_ledger로 1회성 이관하는 마이그레이션 추가(schema_meta 플래그로
+idempotent, purpose/source는 memo 앞에 접어 넣어 데이터 유실 없음). 옛 두
+테이블은 원본 보존을 위해 삭제하지 않음(restore_check.py에도 계속 포함).
+
+**실결함 발견**: investment_schedules의 schedule_executions.
+linked_withdrawal_id가 cash_withdrawals(id)를 하드 FK로 참조하고 있어서,
+그대로 두면 신규 입출금 기록과 영영 연결될 수 없는 채로 남을 뻔함(v1.1/v1.2
+교차 커플링, 코드 전수조사 중 실제 pytest 실패로 발견). 운영 DB에
+schedule_executions가 실제로 0건임을 SSH로 먼저 확인한 뒤, FK 대상을
+cash_ledger로 옮기는 별도 마이그레이션 추가(SQLite는 ALTER로 FK 제약을 못
+바꿔서 빈 테이블일 때만 안전하게 drop -> DDL_STATEMENTS가 새 FK로 재생성,
+행이 있으면 안전하게 건너뛰고 수동처리로 남김). repositories/schedules.py의
+FK 유효성검사 쿼리도 cash_ledger 기준으로 변경.
+
+**API**: /api/v1/cash-ledger(withdrawals.py+cash_inflows.py 대체, CRUD/기간
+요약/CSV -- 용도추천·계좌별합계·중복경고는 제거). cash_flow.py(net/daily)도
+cash_ledger 단일 테이블 기준으로 재작성.
+
+**프론트엔드**: withdrawals.html/js를 통합 장부로 전면 재작성(같은 URL 유지
+-- 사용자 북마크 안 깨짐). cash-inflows.html/js는 삭제(하루 전 배포했던
+기능이라 실사용 데이터 없음). index.html 헤더 아이콘을 "입출금기록" 하나로
+정리(어제 추가했던 별도 💰➕ 아이콘 제거).
+
+**테스트**: tests/test_cash_ledger.py 신규 29개(CRUD/entry_type 4종/필터/
+순현금흐름/기간경계값/마이그레이션 2종 -- cash_ledger 데이터이관 +
+schedule_executions FK 재생성). test_withdrawals.py/test_cash_inflows.py
+삭제, test_schedules_api.py 1건을 새 API로 갱신. 전체 pytest 441개 통과.
+
+**실데이터 검증**: VPS 프로덕션 DB를 로컬로 복사해 마이그레이션 드라이런
+실행 -- 실제 출금기록 3건(범칙금 134,060원/생활비 42,460원/장원우
+200,000원)이 전부 정확히 이관되고(purpose가 memo에 올바르게 접힘)
+PRAGMA integrity_check 통과, 재실행해도 중복 없음(idempotent) 확인 후 로컬
+스냅샷 파일 삭제. 로컬 uvicorn 실브라우저로 신규 통합 UI E2E 확인(계좌
+생성 -> 소비출금 기록 -> 요약카드 "순 -50,000 (입0/출50,000)" 반영 ->
+/api/v1/cash-flow/net 정확성 확인 -> 정리).
+
+배포: main 병합(`87c9ab9`) -> push -> VPS git pull(fast-forward) -> pip
+install -> atrsite-web 재시작 -> health 200 확인 -> 실제 3건 데이터가
+cash_ledger로 정확히 이관됐음을 SSH+curl로 직접 확인(총 순증감 -376,520원,
+계좌명/메모 전부 정확) -> 배포 후 로그에 에러 없음 확인.
