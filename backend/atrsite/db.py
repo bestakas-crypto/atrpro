@@ -13,6 +13,7 @@ from typing import Iterator
 
 from .config import settings
 from .schema import DDL_STATEMENTS, SCHEMA_VERSION
+from .utils import utcnow_iso
 
 
 def _apply_pragmas(conn: sqlite3.Connection) -> None:
@@ -45,7 +46,97 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, dd
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+def _migrate_legacy_cash_records(conn: sqlite3.Connection) -> None:
+    """v1.5(2026-08-12) -- cash_withdrawals(v1.1)/cash_inflows(v1.4)를
+    cash_ledger로 1회성 이관한다. schema_meta 플래그로 딱 한 번만 실행 --
+    안 그러면 매 startup마다 재실행되면서, 사용자가 마이그레이션 후 ledger
+    쪽에서 지운 행이 부활하거나 중복 삽입된다. 두 옛 테이블은 삭제하지
+    않는다(원본 보존 -- 문제가 생기면 언제든 재대조 가능).
+
+    purpose/source(옛 필드)는 새 스키마에 없으므로 memo 앞에 그대로 접어
+    넣어서 데이터가 유실되지 않게 한다(schema.py의 cash_ledger 주석 참고)."""
+    already = conn.execute(
+        "SELECT value FROM schema_meta WHERE key = 'cash_ledger_migrated_v1'"
+    ).fetchone()
+    if already is not None:
+        return
+
+    def fold_memo(label: str, memo: str | None) -> str | None:
+        label = (label or "").strip()
+        memo = (memo or "").strip()
+        if not label:
+            return memo or None
+        return f"{label} — {memo}" if memo else label
+
+    for row in conn.execute("SELECT * FROM cash_withdrawals"):
+        entry_type = "INTERNAL_OUT" if row["flow_type"] == "INTERNAL_TRANSFER" else "EXTERNAL_OUT"
+        conn.execute(
+            """
+            INSERT INTO cash_ledger
+                (id, occurred_at, deposit_account_id, account_name_snapshot, entry_type,
+                 amount, currency, memo, edited, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"legacy-wd-{row['id']}",  # 원본 id와 충돌 없게 접두사(withdrawals/inflows가 독립 PK 공간이라
+                row["withdrawn_at"], row["deposit_account_id"], row["account_name_snapshot"], entry_type,
+                row["amount"], row["currency"], fold_memo(row["purpose"], row["memo"]),
+                row["edited"], row["created_at"], row["updated_at"],
+            ),
+        )
+
+    for row in conn.execute("SELECT * FROM cash_inflows"):
+        entry_type = "INTERNAL_IN" if row["flow_type"] == "INTERNAL_TRANSFER" else "EXTERNAL_IN"
+        conn.execute(
+            """
+            INSERT INTO cash_ledger
+                (id, occurred_at, deposit_account_id, account_name_snapshot, entry_type,
+                 amount, currency, memo, edited, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"legacy-in-{row['id']}",
+                row["deposited_at"], row["deposit_account_id"], row["account_name_snapshot"], entry_type,
+                row["amount"], row["currency"], fold_memo(row["source"], row["memo"]),
+                row["edited"], row["created_at"], row["updated_at"],
+            ),
+        )
+
+    conn.execute(
+        "INSERT INTO schema_meta(key, value) VALUES ('cash_ledger_migrated_v1', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (utcnow_iso(),),
+    )
+
+
+def _migrate_schedule_executions_fk(conn: sqlite3.Connection) -> None:
+    """v1.5(2026-08-12) -- schedule_executions.linked_withdrawal_id의 FK 대상을
+    cash_withdrawals -> cash_ledger로 옮긴다. SQLite는 ALTER TABLE로 기존 FK
+    제약을 못 바꾸므로, 옛 FK를 쓰는 테이블이면 드롭해서 DDL_STATEMENTS의
+    CREATE TABLE IF NOT EXISTS가 새 FK로 다시 만들게 한다(반드시 그 루프보다
+    먼저 호출해야 함). 이 링크 기능은 지금까지 프런트엔드에 실제 입력 UI가
+    없어서(investment-schedule.js가 linked_withdrawal_id를 채운 적 없음)
+    운영 DB에 행이 있었던 적이 없다(2026-08-12 확인, 0건) -- 혹시라도 행이
+    있으면 데이터 손실을 피하기 위해 안전하게 건너뛴다(수동 처리 필요)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_executions'"
+    ).fetchone()
+    if not exists:
+        return  # 신규 DB -- 이후 DDL_STATEMENTS가 새 FK로 바로 만듦
+    fk_rows = conn.execute("PRAGMA foreign_key_list(schedule_executions)").fetchall()
+    points_to_old_table = any(
+        r["table"] == "cash_withdrawals" and r["from"] == "linked_withdrawal_id" for r in fk_rows
+    )
+    if not points_to_old_table:
+        return  # 이미 마이그레이션됨
+    count = conn.execute("SELECT COUNT(*) AS n FROM schedule_executions").fetchone()["n"]
+    if count > 0:
+        return  # 안전하게 건너뜀(현재까지 실제로는 항상 0건) -- 수동 처리 필요
+    conn.execute("DROP TABLE schedule_executions")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    _migrate_schedule_executions_fk(conn)  # DDL_STATEMENTS 루프보다 먼저(드롭 후 재생성).
     for statement in DDL_STATEMENTS:
         conn.execute(statement)
     # 2026-08-02 추가: 이미 만들어져 있던 quote_latest 테이블에 change_pct
@@ -61,6 +152,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn, "cash_withdrawals", "flow_type",
         "flow_type TEXT NOT NULL DEFAULT 'EXTERNAL'",
     )
+    _migrate_legacy_cash_records(conn)
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

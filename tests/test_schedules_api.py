@@ -358,8 +358,8 @@ def test_execution_links_to_existing_withdrawal(client, deposit_account):
     occ_id = resp.json()["occurrences"][0]["id"]
 
     resp = client.post(
-        "/api/v1/withdrawals",
-        json={"withdrawn_at": "2026-08-10T10:00:00", "deposit_account_id": deposit_account, "purpose": "생활비", "amount": 500000, "currency": "KRW"},
+        "/api/v1/cash-ledger",
+        json={"occurred_at": "2026-08-10T10:00:00", "deposit_account_id": deposit_account, "entry_type": "EXTERNAL_OUT", "amount": 500000, "currency": "KRW"},
     )
     withdrawal_id = resp.json()["id"]
 

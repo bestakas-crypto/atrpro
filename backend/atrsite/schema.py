@@ -388,6 +388,43 @@ DDL_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_cash_inflows_currency ON cash_inflows(currency)",
     "CREATE INDEX IF NOT EXISTS idx_cash_inflows_source ON cash_inflows(source)",
 
+    # ---- v1.5(2026-08-12) -- 입출금 통합 장부(cash_ledger) --------------------
+    # cash_withdrawals(v1.1)와 cash_inflows(v1.4)를 하나로 합침. 원래 출금기록은
+    # 카드사용/소비형태 분석까지 염두에 두고 만든 페이지였는데, 그 역할은 이제
+    # card-kunoh/Kunoh's Sheet가 별도 사이트로 담당하게 돼서(사용자, 2026-08-12)
+    # 이 페이지는 "입출금을 간단히 기록해서 analyze.kunoh.top에 데이터를
+    # 제공"하는 목적으로 축소함. purpose/출처 같은 분류 필드는 없애고 자유
+    # 메모 하나로 합침(기존 두 테이블의 purpose/source 값은 마이그레이션 시
+    # memo 앞에 그대로 접어 넣어 데이터 유실 없음 -- db.py의
+    # _migrate_legacy_cash_records 참고).
+    #
+    # entry_type 하나로 "방향(입금/출금)"과 "성격(외부/내부이체)"을 동시에
+    # 표현한다 -- analyze.kunoh.top의 순외부현금흐름 계산은
+    # entry_type IN ('EXTERNAL_IN','EXTERNAL_OUT')만 걸러서 부호(IN=+/OUT=-)
+    # 그대로 합산하면 된다(cash_flow.py 참고).
+    """
+    CREATE TABLE IF NOT EXISTS cash_ledger (
+        id                     TEXT PRIMARY KEY,
+        -- withdrawn_at/deposited_at와 동일한 이유로 Asia/Seoul naive 문자열.
+        occurred_at            TEXT NOT NULL,
+        deposit_account_id     TEXT REFERENCES deposits(id) ON DELETE SET NULL,
+        account_name_snapshot  TEXT NOT NULL,
+        entry_type             TEXT NOT NULL
+                                CHECK(entry_type IN
+                                    ('EXTERNAL_IN', 'EXTERNAL_OUT', 'INTERNAL_IN', 'INTERNAL_OUT')),
+        amount                 REAL NOT NULL,
+        currency               TEXT NOT NULL DEFAULT 'KRW',
+        memo                   TEXT,
+        edited                 INTEGER NOT NULL DEFAULT 0,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_cash_ledger_occurred_at ON cash_ledger(occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_ledger_deposit_account_id ON cash_ledger(deposit_account_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_ledger_currency ON cash_ledger(currency)",
+    "CREATE INDEX IF NOT EXISTS idx_cash_ledger_entry_type ON cash_ledger(entry_type)",
+
     # ---- v1.2 -- 통합 투자 스케줄 및 예약알림 --------------------------------
     # "계좌" 개념은 이 프로젝트에 별도 테이블이 없다 -- deposits가 사실상 유일한
     # 계좌 엔티티(현금/예금 계좌)라서 cash_withdrawals와 동일하게
@@ -490,13 +527,15 @@ DDL_STATEMENTS: list[str] = [
     """
     CREATE TABLE IF NOT EXISTS schedule_executions (
         -- 계획(planned) 대비 실행(actual)을 분리하는 명시적 실행 기록 --
-        -- 이 테이블 자체는 절대로 trades/cash_withdrawals/deposits를 대신 만들지
+        -- 이 테이블 자체는 절대로 trades/cash_ledger/deposits를 대신 만들지
         -- 않는다(스펙: 자동 매매/이체 금지). 사용자가 실제로 발생시킨 거래/출금을
         -- 나중에 연결하거나(linked_*_id), 연결 없이 "완료 처리"만 기록한다.
         id                    TEXT PRIMARY KEY,
         occurrence_id          TEXT NOT NULL REFERENCES schedule_occurrences(id) ON DELETE CASCADE,
         execution_type          TEXT NOT NULL,
-        linked_withdrawal_id      TEXT REFERENCES cash_withdrawals(id) ON DELETE SET NULL,
+        -- v1.5(2026-08-12): FK 대상을 cash_withdrawals -> cash_ledger로 변경
+        -- (입출금 통합 장부, db.py의 _migrate_schedule_executions_fk 참고).
+        linked_withdrawal_id      TEXT REFERENCES cash_ledger(id) ON DELETE SET NULL,
         linked_trade_id           TEXT REFERENCES trades(id) ON DELETE SET NULL,
         executed_amount            REAL,
         executed_at                 TEXT NOT NULL,

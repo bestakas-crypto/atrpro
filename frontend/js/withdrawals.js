@@ -1,24 +1,25 @@
-// frontend/js/withdrawals.js -- v1.1 현금 출금기록(독립 페이지).
-// report.html/company-explorer.html/briefing.html과 같은 패턴: index.html의
-// SPA 상태(main.js)와 완전히 분리된 별도 페이지. 모든 데이터는 REST API로만
-// 저장하고(스펙 12) localStorage에 원본을 저장하지 않는다.
+// frontend/js/withdrawals.js -- v1.5(2026-08-12) 입출금 통합 장부.
+// 옛 출금기록(cash_withdrawals) 전용 페이지였는데, 카드/소비 상세 분석은
+// card-kunoh/Kunoh's Sheet로 옮겨가서(사용자, 2026-08-12) 입금까지 합친
+// 간단한 통합 장부로 재작성. report.html/company-explorer.html 등과 같은
+// 패턴: index.html의 SPA 상태(main.js)와 완전히 분리된 별도 페이지. 모든
+// 데이터는 REST API로만 저장하고(스펙 12) localStorage에 원본을 저장하지
+// 않는다.
 import { api } from './api-client.js';
 import { nowDatetimeLocalStr } from './formatters.js';
 
 const el = {};
 function cacheDom() {
   const ids = [
-    'btn-close', 'btn-export-csv', 'btn-add-withdrawal',
-    'search-purpose', 'recent-purposes',
-    'filter-start-date', 'filter-end-date', 'filter-account', 'filter-currency',
+    'btn-close', 'btn-export-csv', 'btn-add-entry',
+    'filter-start-date', 'filter-end-date', 'filter-account', 'filter-currency', 'filter-entry-type',
     'btn-apply-filter', 'btn-reset-filter',
-    'result-count', 'result-sum', 'btn-toggle-account-breakdown', 'account-breakdown',
+    'result-count', 'result-sum',
     'wd-list', 'wd-empty', 'btn-load-more',
-    'modal-withdrawal', 'modal-withdrawal-title', 'no-account-hint',
-    'wd-account', 'wd-withdrawn-at', 'wd-purpose', 'wd-amount', 'wd-currency', 'wd-memo',
-    'btn-withdrawal-cancel', 'btn-withdrawal-save',
+    'modal-entry', 'modal-entry-title', 'no-account-hint',
+    'wd-account', 'wd-occurred-at', 'wd-entry-type', 'wd-amount', 'wd-currency', 'wd-memo',
+    'btn-entry-cancel', 'btn-entry-save',
     'modal-delete-confirm', 'delete-confirm-detail', 'btn-delete-cancel', 'btn-delete-confirm',
-    'modal-confirm', 'confirm-message', 'btn-confirm-cancel', 'btn-confirm-ok',
     'toast',
   ];
   ids.forEach((id) => {
@@ -28,7 +29,7 @@ function cacheDom() {
 }
 
 const state = {
-  filters: { start_date: '', end_date: '', purpose: '', deposit_account_id: '', currency: '' },
+  filters: { start_date: '', end_date: '', deposit_account_id: '', currency: '', entry_type: '' },
   offset: 0,
   limit: 20,
   items: [],
@@ -36,10 +37,15 @@ const state = {
   deposits: [],
   editingId: null,
   deletingId: null,
-  confirmCallback: null,
 };
 
-const CURRENCY_LABEL = { KRW: '원', USD: '달러', JPY: '엔' };
+const ENTRY_TYPE_LABEL = {
+  EXTERNAL_IN: '외부입금',
+  EXTERNAL_OUT: '소비출금',
+  INTERNAL_IN: '내부이체입금',
+  INTERNAL_OUT: '내부이체출금',
+};
+const IN_TYPES = new Set(['EXTERNAL_IN', 'INTERNAL_IN']);
 
 // ---------- 유틸 ----------
 let toastTimer = null;
@@ -50,12 +56,6 @@ function showToast(msg) {
   toastTimer = setTimeout(() => { el.toast.hidden = true; }, 2600);
 }
 
-function askConfirm(message, onConfirm) {
-  el.confirmMessage.textContent = message;
-  state.confirmCallback = onConfirm;
-  el.modalConfirm.hidden = false;
-}
-
 function formatAmount(amount, currency) {
   const n = Number(amount);
   if (!Number.isFinite(n)) return '-';
@@ -63,14 +63,18 @@ function formatAmount(amount, currency) {
   return n.toLocaleString('ko-KR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-function formatAmountsByCurrency(byCurrency) {
-  const entries = Object.entries(byCurrency || {}).filter(([, v]) => v);
+// {KRW: {in, out, net}, ...} -> "KRW 순 +1,000,000 (입 3,000,000 / 출 2,000,000)"
+function formatNetByCurrency(byCurrency) {
+  const entries = Object.entries(byCurrency || {}).filter(([, v]) => v.in || v.out);
   if (entries.length === 0) return '<span class="empty">기록 없음</span>';
-  return entries.map(([cur, amt]) => `${cur} ${formatAmount(amt, cur)}`).join('<br>');
+  return entries.map(([cur, v]) => {
+    const sign = v.net > 0 ? '+' : '';
+    return `${cur} 순 ${sign}${formatAmount(v.net, cur)}`
+      + `<br><span class="wd-hint">입 ${formatAmount(v.in, cur)} / 출 ${formatAmount(v.out, cur)}</span>`;
+  }).join('<br>');
 }
 
-function formatWithdrawnAt(s) {
-  // 'YYYY-MM-DDTHH:MM:SS' -> 'YYYY-MM-DD HH:mm' (스펙 3.1 화면 표시 형식).
+function formatOccurredAt(s) {
   return (s || '').replace('T', ' ').slice(0, 16);
 }
 
@@ -104,45 +108,17 @@ async function loadDeposits() {
   });
 }
 
-// 계좌 선택 시 통화 자동 반영(스펙 4: "계좌를 선택할 때 그 통화를 기본값으로
-// 자동 선택"). 계좌는 하나의 통화만 쓰는 구조라 그대로 고정한다.
 function syncCurrencyToSelectedAccount() {
   const opt = el.wdAccount.selectedOptions[0];
   if (opt && opt.dataset.currency) el.wdCurrency.value = opt.dataset.currency;
 }
 
 // ---------- 요약 카드 ----------
-// cacheDom()의 kebab-case->camelCase 변환은 하이픈만 처리하고 밑줄은 그대로
-// 두므로(예: 'summary-this_week' -> el.summaryThis_week) 여기서는 대신
-// getElementById로 HTML의 id 문자열(summary-today 등)을 직접 써서 헷갈릴
-// 여지를 없앤다.
 async function loadSummary() {
-  const summary = await api.getWithdrawalsSummary();
+  const summary = await api.getCashLedgerSummary();
   for (const key of ['today', 'this_week', 'this_month', 'ytd']) {
-    document.getElementById(`summary-${key}`).innerHTML = formatAmountsByCurrency(summary[key]);
+    document.getElementById(`summary-${key}`).innerHTML = formatNetByCurrency(summary[key]);
   }
-}
-
-// ---------- 최근 용도 추천(스펙 9.1) ----------
-async function loadRecentPurposes() {
-  const { purposes } = await api.getRecentPurposes();
-  el.recentPurposes.innerHTML = '';
-  if (!purposes || purposes.length === 0) return;
-  const label = document.createElement('span');
-  label.className = 'wd-hint';
-  label.textContent = '최근 용도: ';
-  el.recentPurposes.appendChild(label);
-  purposes.forEach((p) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'wd-purpose-chip';
-    chip.textContent = p;
-    chip.addEventListener('click', () => {
-      el.searchPurpose.value = p;
-      applyFilters();
-    });
-    el.recentPurposes.appendChild(chip);
-  });
 }
 
 // ---------- 목록 조회 ----------
@@ -150,9 +126,9 @@ function currentQuery(offset) {
   const q = {};
   if (state.filters.start_date) q.start_date = state.filters.start_date;
   if (state.filters.end_date) q.end_date = state.filters.end_date;
-  if (state.filters.purpose) q.purpose = state.filters.purpose;
   if (state.filters.deposit_account_id) q.deposit_account_id = state.filters.deposit_account_id;
   if (state.filters.currency) q.currency = state.filters.currency;
+  if (state.filters.entry_type) q.entry_type = state.filters.entry_type;
   q.limit = state.limit;
   q.offset = offset;
   return q;
@@ -160,7 +136,7 @@ function currentQuery(offset) {
 
 async function loadList({ append = false } = {}) {
   const offset = append ? state.items.length : 0;
-  const resp = await api.listWithdrawals(currentQuery(offset));
+  const resp = await api.listCashLedger(currentQuery(offset));
   state.total = resp.total;
   state.items = append ? state.items.concat(resp.items) : resp.items;
 
@@ -173,22 +149,7 @@ function renderResultSummary(resp) {
   el.resultCount.textContent = hasFilter
     ? `검색 결과: 총 ${resp.total}건`
     : `전체 ${resp.total}건`;
-  el.resultSum.innerHTML = formatAmountsByCurrency(resp.sum_by_currency);
-
-  const accounts = resp.sum_by_account || [];
-  if (accounts.length === 0) {
-    el.btnToggleAccountBreakdown.hidden = true;
-    el.accountBreakdown.classList.remove('open');
-  } else {
-    el.btnToggleAccountBreakdown.hidden = false;
-    // 2026-08-06 XSS 수정 -- account_name_snapshot은 사용자가 자유롭게 입력한
-    // 계좌 이름이라(예금 등록 시 텍스트 그대로) escapeText() 없이 넣으면 안 됨.
-    // 카드 메타(221번 줄)/삭제 확인(375번 줄)은 이미 이스케이프하고 있었는데
-    // 여기 계좌별 합계만 빠져 있었다.
-    el.accountBreakdown.innerHTML = accounts
-      .map((a) => `<div>${escapeText(a.account_name_snapshot)} · ${a.currency} ${formatAmount(a.total, a.currency)} (${a.count}건)</div>`)
-      .join('');
-  }
+  el.resultSum.innerHTML = formatNetByCurrency(resp.sum_by_currency);
 }
 
 function renderList() {
@@ -205,24 +166,26 @@ function renderCard(w) {
 
   const top = document.createElement('div');
   top.className = 'wd-card-top';
-  const purposeEl = document.createElement('div');
-  purposeEl.className = 'wd-card-purpose';
-  purposeEl.textContent = w.purpose; // textContent만 사용 -- innerHTML에 사용자 입력 직접 삽입 금지(스펙 13 XSS 방지)
+  const typeEl = document.createElement('div');
+  typeEl.className = 'wd-card-purpose';
+  typeEl.textContent = ENTRY_TYPE_LABEL[w.entry_type] || w.entry_type;
   if (w.is_edited) {
     const badge = document.createElement('span');
     badge.className = 'wd-edited-badge';
     badge.textContent = '수정됨';
-    purposeEl.appendChild(badge);
+    typeEl.appendChild(badge);
   }
   const amountEl = document.createElement('div');
   amountEl.className = 'wd-card-amount';
-  amountEl.textContent = `- ${w.currency} ${formatAmount(w.amount, w.currency)}`;
-  top.appendChild(purposeEl);
+  const isIn = IN_TYPES.has(w.entry_type);
+  amountEl.textContent = `${isIn ? '+' : '-'} ${w.currency} ${formatAmount(w.amount, w.currency)}`;
+  amountEl.classList.add(isIn ? 'wd-amount-in' : 'wd-amount-out');
+  top.appendChild(typeEl);
   top.appendChild(amountEl);
 
   const meta = document.createElement('div');
   meta.className = 'wd-card-meta';
-  meta.innerHTML = `<span>${formatWithdrawnAt(w.withdrawn_at)}</span><span>${escapeText(w.account_name_snapshot)}</span>`;
+  meta.innerHTML = `<span>${escapeText(formatOccurredAt(w.occurred_at))}</span><span>${escapeText(w.account_name_snapshot)}</span>`;
 
   card.appendChild(top);
   card.appendChild(meta);
@@ -251,7 +214,6 @@ function renderCard(w) {
   return card;
 }
 
-// meta 영역은 innerHTML을 쓰므로(레이아웃 편의) 텍스트만 안전하게 이스케이프한다.
 function escapeText(s) {
   const div = document.createElement('div');
   div.textContent = s == null ? '' : String(s);
@@ -263,9 +225,9 @@ function applyFilters() {
   state.filters = {
     start_date: el.filterStartDate.value,
     end_date: el.filterEndDate.value,
-    purpose: el.searchPurpose.value.trim(),
     deposit_account_id: el.filterAccount.value,
     currency: el.filterCurrency.value,
+    entry_type: el.filterEntryType.value,
   };
   loadList();
 }
@@ -273,9 +235,9 @@ function applyFilters() {
 function resetFilters() {
   el.filterStartDate.value = '';
   el.filterEndDate.value = '';
-  el.searchPurpose.value = '';
   el.filterAccount.value = '';
   el.filterCurrency.value = '';
+  el.filterEntryType.value = '';
   applyFilters();
 }
 
@@ -285,28 +247,26 @@ function openAddModal() {
     showToast('등록된 예금계좌가 없습니다. 먼저 예금관리에서 계좌를 등록해 주세요.');
   }
   state.editingId = null;
-  el.modalWithdrawalTitle.textContent = '출금 추가';
-  el.wdWithdrawnAt.value = nowDatetimeLocalStr();
-  el.wdPurpose.value = '';
+  el.modalEntryTitle.textContent = '기록 추가';
+  el.wdOccurredAt.value = nowDatetimeLocalStr();
+  el.wdEntryType.value = 'EXTERNAL_OUT';
   el.wdAmount.value = '';
   el.wdMemo.value = '';
   if (el.wdAccount.options.length > 0) {
     el.wdAccount.selectedIndex = 0;
     syncCurrencyToSelectedAccount();
   }
-  el.modalWithdrawal.hidden = false;
+  el.modalEntry.hidden = false;
 }
 
 function openEditModal(w) {
   state.editingId = w.id;
-  el.modalWithdrawalTitle.textContent = '출금 수정';
-  el.wdWithdrawnAt.value = w.withdrawn_at.slice(0, 16);
-  el.wdPurpose.value = w.purpose;
+  el.modalEntryTitle.textContent = '기록 수정';
+  el.wdOccurredAt.value = w.occurred_at.slice(0, 16);
+  el.wdEntryType.value = w.entry_type;
   el.wdAmount.value = w.amount;
   el.wdCurrency.value = w.currency;
   el.wdMemo.value = w.memo || '';
-  // 계좌가 비활성/삭제됐어도(스펙 4 권장 정책) 수정 화면에선 현재 선택값을
-  // 그대로 보여줘야 하므로, 목록에 없는 계좌면 임시 옵션을 추가해 선택해둔다.
   if (w.deposit_account_id && ![...el.wdAccount.options].some((o) => o.value === w.deposit_account_id)) {
     const opt = document.createElement('option');
     opt.value = w.deposit_account_id;
@@ -314,19 +274,19 @@ function openEditModal(w) {
     el.wdAccount.appendChild(opt);
   }
   if (w.deposit_account_id) el.wdAccount.value = w.deposit_account_id;
-  el.modalWithdrawal.hidden = false;
+  el.modalEntry.hidden = false;
 }
 
-function closeWithdrawalModal() {
-  el.modalWithdrawal.hidden = true;
+function closeEntryModal() {
+  el.modalEntry.hidden = true;
   state.editingId = null;
 }
 
 function currentFormPayload() {
   return {
-    withdrawn_at: el.wdWithdrawnAt.value,
+    occurred_at: el.wdOccurredAt.value,
     deposit_account_id: el.wdAccount.value,
-    purpose: el.wdPurpose.value.trim(),
+    entry_type: el.wdEntryType.value,
     amount: parseFloat(el.wdAmount.value),
     currency: el.wdCurrency.value,
     memo: el.wdMemo.value.trim(),
@@ -335,51 +295,35 @@ function currentFormPayload() {
 
 async function handleSave() {
   const payload = currentFormPayload();
-  if (!payload.deposit_account_id) { showToast('출금계좌를 선택하세요.'); return; }
-  if (!payload.withdrawn_at) { showToast('출금 일시를 입력하세요.'); return; }
-  if (!payload.purpose) { showToast('용도를 입력하세요.'); return; }
-  if (!(payload.amount > 0)) { showToast('출금액은 0보다 커야 합니다.'); return; }
+  if (!payload.deposit_account_id) { showToast('계좌를 선택하세요.'); return; }
+  if (!payload.occurred_at) { showToast('일시를 입력하세요.'); return; }
+  if (!(payload.amount > 0)) { showToast('금액은 0보다 커야 합니다.'); return; }
 
-  // 스펙 9.2 중복입력 경고 -- 신규 등록일 때만 검사(수정 중엔 자기 자신과
-  // 비교돼서 항상 "중복"으로 뜨는 걸 피함).
-  if (!state.editingId) {
-    try {
-      const { duplicate } = await api.checkWithdrawalDuplicate(payload);
-      if (duplicate) {
-        askConfirm('비슷한 출금기록이 이미 있습니다. 그래도 저장하시겠습니까?', () => submitSave(payload));
-        return;
-      }
-    } catch (e) { /* 중복검사 실패는 저장을 막지 않는다 */ }
-  }
-  await submitSave(payload);
-}
-
-async function submitSave(payload) {
-  el.btnWithdrawalSave.disabled = true; // 스펙 12 -- 중복 제출 방지
+  el.btnEntrySave.disabled = true; // 스펙 12 -- 중복 제출 방지
   try {
     if (state.editingId) {
-      await api.updateWithdrawal(state.editingId, payload);
+      await api.updateCashLedgerEntry(state.editingId, payload);
     } else {
-      await api.createWithdrawal(payload);
+      await api.createCashLedgerEntry(payload);
     }
   } catch (e) {
     showToast('저장 실패: ' + e.message);
     return;
   } finally {
-    el.btnWithdrawalSave.disabled = false;
+    el.btnEntrySave.disabled = false;
   }
-  closeWithdrawalModal();
+  closeEntryModal();
   showToast('저장되었습니다.');
-  await Promise.all([loadList(), loadSummary(), loadRecentPurposes()]);
+  await Promise.all([loadList(), loadSummary()]);
 }
 
 // ---------- 삭제 ----------
 function openDeleteConfirm(w) {
   state.deletingId = w.id;
   el.deleteConfirmDetail.innerHTML = `
-    <dt>일시</dt><dd>${escapeText(formatWithdrawnAt(w.withdrawn_at))}</dd>
+    <dt>일시</dt><dd>${escapeText(formatOccurredAt(w.occurred_at))}</dd>
     <dt>계좌</dt><dd>${escapeText(w.account_name_snapshot)}</dd>
-    <dt>용도</dt><dd>${escapeText(w.purpose)}</dd>
+    <dt>구분</dt><dd>${escapeText(ENTRY_TYPE_LABEL[w.entry_type] || w.entry_type)}</dd>
     <dt>금액</dt><dd>${escapeText(w.currency + ' ' + formatAmount(w.amount, w.currency))}</dd>
   `;
   el.modalDeleteConfirm.hidden = false;
@@ -389,7 +333,7 @@ async function handleDelete() {
   const id = state.deletingId;
   if (!id) return;
   try {
-    await api.deleteWithdrawal(id);
+    await api.deleteCashLedgerEntry(id);
   } catch (e) {
     showToast('삭제 실패: ' + e.message);
     return;
@@ -397,7 +341,6 @@ async function handleDelete() {
   el.modalDeleteConfirm.hidden = true;
   state.deletingId = null;
   showToast('삭제되었습니다.');
-  // 스펙 5.4 -- 삭제 성공 후 목록과 모든 합계를 다시 조회.
   await Promise.all([loadList(), loadSummary()]);
 }
 
@@ -405,11 +348,11 @@ async function handleDelete() {
 async function handleExportCsv() {
   el.btnExportCsv.disabled = true;
   try {
-    const blob = await api.exportWithdrawalsCsv(currentQuery(0));
+    const blob = await api.exportCashLedgerCsv(currentQuery(0));
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'cash_withdrawals.csv';
+    a.download = 'cash_ledger.csv';
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -428,33 +371,18 @@ function bindEvents() {
     else window.location.href = 'index.html';
   });
 
-  el.btnAddWithdrawal.addEventListener('click', openAddModal);
-  el.btnWithdrawalCancel.addEventListener('click', closeWithdrawalModal);
-  el.btnWithdrawalSave.addEventListener('click', handleSave);
+  el.btnAddEntry.addEventListener('click', openAddModal);
+  el.btnEntryCancel.addEventListener('click', closeEntryModal);
+  el.btnEntrySave.addEventListener('click', handleSave);
   el.wdAccount.addEventListener('change', syncCurrencyToSelectedAccount);
-  el.modalWithdrawal.addEventListener('click', (e) => { if (e.target === el.modalWithdrawal) closeWithdrawalModal(); });
+  el.modalEntry.addEventListener('click', (e) => { if (e.target === el.modalEntry) closeEntryModal(); });
 
   el.btnDeleteCancel.addEventListener('click', () => { el.modalDeleteConfirm.hidden = true; state.deletingId = null; });
   el.btnDeleteConfirm.addEventListener('click', handleDelete);
   el.modalDeleteConfirm.addEventListener('click', (e) => { if (e.target === el.modalDeleteConfirm) { el.modalDeleteConfirm.hidden = true; state.deletingId = null; } });
 
-  el.btnConfirmCancel.addEventListener('click', () => { el.modalConfirm.hidden = true; state.confirmCallback = null; });
-  el.btnConfirmOk.addEventListener('click', () => {
-    const cb = state.confirmCallback;
-    el.modalConfirm.hidden = true;
-    state.confirmCallback = null;
-    if (cb) cb();
-  });
-  el.modalConfirm.addEventListener('click', (e) => { if (e.target === el.modalConfirm) { el.modalConfirm.hidden = true; state.confirmCallback = null; } });
-
   el.btnApplyFilter.addEventListener('click', applyFilters);
   el.btnResetFilter.addEventListener('click', resetFilters);
-  el.searchPurpose.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyFilters(); });
-
-  el.btnToggleAccountBreakdown.addEventListener('click', () => {
-    const open = el.accountBreakdown.classList.toggle('open');
-    el.btnToggleAccountBreakdown.textContent = open ? '계좌별 합계 숨기기 ▴' : '계좌별 합계 보기 ▾';
-  });
 
   el.btnLoadMore.addEventListener('click', () => loadList({ append: true }));
   el.btnExportCsv.addEventListener('click', handleExportCsv);
@@ -466,7 +394,7 @@ async function init() {
   bindEvents();
   try {
     await loadDeposits();
-    await Promise.all([loadSummary(), loadRecentPurposes(), loadList()]);
+    await Promise.all([loadSummary(), loadList()]);
   } catch (e) {
     showToast('불러오기 실패: ' + e.message);
   }
@@ -476,8 +404,7 @@ document.addEventListener('DOMContentLoaded', init);
 
 // index.html을 거치지 않고 헤더 아이콘으로 이 페이지가 바로 새 탭에서 열릴
 // 수 있어서(target=_blank), 이 페이지 자체도 서비스워커 갱신을 확인해야
-// 한다(2026-08-03 종목탐구에서 실제로 겪은 문제와 동일한 이유 -- briefing.js/
-// company-explorer.js와 같은 패턴).
+// 한다(2026-08-03 종목탐구에서 실제로 겪은 문제와 동일한 이유).
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('service-worker.js').then((reg) => {
     reg.update().catch(() => {});

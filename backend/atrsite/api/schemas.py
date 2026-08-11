@@ -75,47 +75,25 @@ class DepositUpdate(BaseModel):
     currency: Optional[str] = None
 
 
-# backend/atrsite/api/schemas.py -- v1.1 현금 출금기록(2026-08-05 추가).
-class WithdrawalCreate(BaseModel):
-    withdrawn_at: str = Field(min_length=1)
+# backend/atrsite/api/schemas.py -- v1.5 입출금 통합 장부(2026-08-12 추가).
+# 옛 WithdrawalCreate/Update + CashInflowCreate/Update를 하나로 합침 -- 카드
+# 소비분석 역할은 card-kunoh/Kunoh's Sheet로 옮겨가서 이 장부는 순수 입출금
+# 기록+analyze.kunoh.top 데이터 제공용으로 축소(사용자, 2026-08-12).
+class CashLedgerEntryCreate(BaseModel):
+    occurred_at: str = Field(min_length=1)
     deposit_account_id: str = Field(min_length=1)
-    purpose: str = Field(min_length=1)
+    entry_type: str = Field(min_length=1)  # EXTERNAL_IN/EXTERNAL_OUT/INTERNAL_IN/INTERNAL_OUT
     amount: float = Field(gt=0)
     currency: str = Field(min_length=1)
-    # v1.4(2026-08-12) -- 기본값 EXTERNAL(자산 총액에서 실제로 빠지는 소비).
-    flow_type: str = "EXTERNAL"
     memo: Optional[str] = None
 
 
-class WithdrawalUpdate(BaseModel):
-    withdrawn_at: Optional[str] = None
+class CashLedgerEntryUpdate(BaseModel):
+    occurred_at: Optional[str] = None
     deposit_account_id: Optional[str] = None
-    purpose: Optional[str] = None
+    entry_type: Optional[str] = None
     amount: Optional[float] = Field(default=None, gt=0)
     currency: Optional[str] = None
-    flow_type: Optional[str] = None
-    memo: Optional[str] = None
-
-
-# backend/atrsite/api/schemas.py -- v1.4 현금 입금기록(analyze.kunoh.top 1단계,
-# 2026-08-12 추가). WithdrawalCreate/Update의 정반대 짝(purpose -> source).
-class CashInflowCreate(BaseModel):
-    deposited_at: str = Field(min_length=1)
-    deposit_account_id: str = Field(min_length=1)
-    source: str = Field(min_length=1)
-    amount: float = Field(gt=0)
-    currency: str = Field(min_length=1)
-    flow_type: str = "EXTERNAL"
-    memo: Optional[str] = None
-
-
-class CashInflowUpdate(BaseModel):
-    deposited_at: Optional[str] = None
-    deposit_account_id: Optional[str] = None
-    source: Optional[str] = None
-    amount: Optional[float] = Field(default=None, gt=0)
-    currency: Optional[str] = None
-    flow_type: Optional[str] = None
     memo: Optional[str] = None
 
 

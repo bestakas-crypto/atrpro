@@ -17,7 +17,7 @@ from . import __version__
 from .adapters import opendart_client
 from .api.analysis import router as analysis_router
 from .api.cash_flow import router as cash_flow_router
-from .api.cash_inflows import router as cash_inflows_router
+from .api.cash_ledger import router as cash_ledger_router
 from .api.company import router as company_router
 from .api.dashboard import router as dashboard_router
 from .api.deposits import router as deposits_router
@@ -29,7 +29,6 @@ from .api.schedules import occurrences_router, plans_router, schedules_router
 from .api.snapshots import router as snapshots_router
 from .api.trade_plans import router as trade_plans_router
 from .api.trades import router as trades_router
-from .api.withdrawals import router as withdrawals_router
 from .config import settings
 from .db import connect, init_db
 
@@ -61,8 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(instruments_router)
     app.include_router(trades_router)
     app.include_router(deposits_router)
-    app.include_router(withdrawals_router)
-    app.include_router(cash_inflows_router)
+    app.include_router(cash_ledger_router)
     app.include_router(cash_flow_router)
     app.include_router(plans_router)
     app.include_router(schedules_router)

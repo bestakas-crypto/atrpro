@@ -701,7 +701,8 @@ def create_execution(
     if occ is None:
         raise ScheduleValidationError(f"존재하지 않는 occurrence_id: {occurrence_id}")
     if linked_withdrawal_id:
-        row = conn.execute("SELECT id FROM cash_withdrawals WHERE id = ?", (linked_withdrawal_id,)).fetchone()
+        # v1.5(2026-08-12): cash_withdrawals -> cash_ledger(입출금 통합 장부)로 대상 변경.
+        row = conn.execute("SELECT id FROM cash_ledger WHERE id = ?", (linked_withdrawal_id,)).fetchone()
         if row is None:
             raise ScheduleValidationError(f"존재하지 않는 linked_withdrawal_id: {linked_withdrawal_id}")
     if linked_trade_id:
