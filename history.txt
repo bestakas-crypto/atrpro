@@ -1915,3 +1915,64 @@ VPS 배포 전 백업(`atrsite-20260809T032030Z.db.gz`, restore_check 통과)
 -> git pull -> atrsite-web 재시작 -> health 200/미인증 401/신규 페이지
 200/헤더에 "확정손익" 정상 렌더링(인코딩 재확인)/로그 에러 없음 확인.
 스키마 변경 없음(순수 조회 API, 신규 테이블 없음).
+
+[v1.4 -- 현금 입금기록(cash_inflows) + 순외부현금흐름 API] (2026-08-12)
+====================================================================
+analyze.kunoh.top(자산추이 메뉴를 PB 리포트 수준 분석 사이트로 독립시키는
+신규 프로젝트) 1단계. 사용자가 4개 LLM(DeepSeek/Gemini/Claude/GPT)에게
+받은 기획안을 종합 검토하는 과정에서, 모든 기획안이 공통으로 지적한
+"입출금 때문에 단순 수익률이 왜곡된다 -> TWR(시간가중수익률) 필요"라는
+지점을 실제 코드로 확인. deposits 테이블이 순수 현재잔액 스냅샷(변경
+이력 없음)이고 cash_withdrawals(v1.1)는 출금 전용이라, "이번 달에
+급여가 새로 들어왔다" 같은 입금 이벤트를 시스템이 구분할 방법이
+아예 없었음 -- 이게 정확한 TWR을 지금 계산할 수 없는 근본 원인이었음
+(GPT 기획안의 "1단계 게이트" 접근이 정확했고, Gemini의 "TWR 즉시 가능"
+전제는 틀렸음이 이 조사로 확인됨). 사용자가 "1단계 선행" 방침을 확정하고
+이 작업은 Claude가 직접 strpro를 고치는 것으로 결정(Codex는 향후
+analyze.kunoh.top 자체 코딩만 맡음).
+
+feature/cash-inflows 브랜치에서 작업.
+
+**DB**: cash_inflows 테이블 신규(cash_withdrawals의 정반대 짝 -- purpose
+대신 source, withdrawn_at 대신 deposited_at). cash_withdrawals/cash_inflows
+둘 다 flow_type(EXTERNAL/INTERNAL_TRANSFER) 컬럼 추가 -- 계좌 간 내부이체
+(예: 예금계좌->증권계좌 매수자금 이체, 총자산 스냅샷 안에서 이미 위치만
+바뀐 것으로 반영됨)와 실제 외부입출금(급여/생활비 등, 총자산이 실제로
+늘거나 줆)을 구분해서, 순입금 계산 시 내부이체가 중복 반영되지 않게 함.
+기존 cash_withdrawals 행은 전부 flow_type='EXTERNAL' 기본값(v1.1 스펙
+원문의 용도가 전부 소비 목적이었다는 전제). db.py의 _add_column_if_missing
+로 이미 운영 중인 DB에도 안전하게 ALTER TABLE 보충(기존 데이터 손실
+없음 -- legacy 스키마를 흉내낸 별도 마이그레이션 테스트로 직접 검증).
+
+**API**: /api/v1/cash-inflows(withdrawals와 동일 패턴 -- CRUD/기간요약/
+최근출처/중복경고/CSV내보내기), /api/v1/cash-flow/net(통화별 순입금
+inflow-outflow, EXTERNAL만), /api/v1/cash-flow/daily(일별/통화별 순외부
+현금흐름 -- 자산 스냅샷과 날짜 기준 조인해 analyze.kunoh.top이 TWR/
+Modified Dietz 계산 입력값으로 쓸 용도). withdrawals API도 flow_type
+파라미터를 받도록 확장(생성/수정/필터/CSV 전부).
+
+**프론트엔드**: cash-inflows.html/js(withdrawals.html/js와 동일 UI 패턴,
+"외부입금/내부이체" 선택 필드 추가, 상단에 안내문구). index.html 헤더에
+💰➕ 아이콘 추가, withdrawals.html<->cash-inflows.html 상호 링크 추가.
+
+**테스트**: tests/test_cash_inflows.py 신규 20개(CRUD/유효성검증/flow_type
+필터/순입금 집계 -- 내부이체 제외 확인/기간 경계값/CSV/중복경고/실제
+라이브 스키마를 흉내낸 마이그레이션 시뮬레이션). scripts/restore_check.py
+CORE_TABLES에 cash_inflows 추가. 전체 pytest 456개 통과(기존 436 + 신규
+20). 로컬 uvicorn(conda strpro 환경, PYTHONPATH=backend)으로 실 브라우저
+E2E 확인: 예금계좌 생성 -> "+ 입금 추가"로 급여 300만원 등록 ->
+오늘/이번주/이번달/YTD 요약카드에 즉시 반영 -> "최근 출처" 칩에 "급여"
+표시 -> /api/v1/cash-flow/net이 {"KRW":{"inflow":3000000,"outflow":0,
+"net":3000000}} 정확히 반환 확인 후 테스트 데이터 정리.
+
+배포: feature/cash-inflows -> main 병합(`58cf375`) -> push -> VPS
+git pull(fast-forward) -> pip install -r requirements-lock.txt ->
+atrsite-web 재시작 -> health 200 확인 -> 실제 운영 데이터(한투 CMA
+382,394,851원 등) 보존 확인 -> /api/v1/cash-inflows 실제 200 응답 확인.
+백업은 스키마가 순수 추가(신규 테이블 2개+컬럼 1개, 기존 컬럼/테이블
+변경 없음)라 스냅샷 백업 생략(로컬에서 legacy 스키마 마이그레이션
+테스트로 이미 안전성 검증됨).
+
+analyze.kunoh.top 자체(별도 프로젝트/도메인, Codex가 코딩 예정)는 아직
+착수 전 -- 이건 그 프로젝트가 읽어갈 데이터 기반만 strpro에 먼저
+마련해둔 것.
