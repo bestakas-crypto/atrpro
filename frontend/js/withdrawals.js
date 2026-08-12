@@ -44,8 +44,9 @@ const ENTRY_TYPE_LABEL = {
   EXTERNAL_OUT: '소비출금',
   INTERNAL_IN: '내부이체입금',
   INTERNAL_OUT: '내부이체출금',
+  INTEREST_INCOME: '이자소득',
 };
-const IN_TYPES = new Set(['EXTERNAL_IN', 'INTERNAL_IN']);
+const IN_TYPES = new Set(['EXTERNAL_IN', 'INTERNAL_IN', 'INTEREST_INCOME']);
 
 // ---------- 유틸 ----------
 let toastTimer = null;

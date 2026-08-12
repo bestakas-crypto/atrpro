@@ -135,10 +135,56 @@ def _migrate_schedule_executions_fk(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE schedule_executions")
 
 
+def _rename_cash_ledger_for_entry_type_migration(conn: sqlite3.Connection) -> None:
+    """v1.7(2026-08-12, 이자소득) -- cash_ledger.entry_type CHECK 제약에
+    INTEREST_INCOME을 추가하기 위한 1단계. SQLite는 ALTER TABLE로 CHECK
+    제약을 못 바꾸므로, 옛 제약을 쓰는 테이블이면 임시 이름으로 옮겨서
+    DDL_STATEMENTS의 CREATE TABLE IF NOT EXISTS가 새 제약으로 다시 만들게
+    한다(반드시 그 루프보다 먼저 호출). schedule_executions FK 마이그레이션
+    (v1.5)과 다르게 cash_ledger는 이미 실데이터가 있어서 "비어있을 때만"이
+    아니라 무조건 옮기고, 데이터는 _finish_cash_ledger_entry_type_migration
+    에서 그대로 복사해온다(DROP 전용이 아님)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_ledger'"
+    ).fetchone()
+    if not exists:
+        return  # 신규 DB -- 이후 DDL_STATEMENTS가 새 제약으로 바로 만듦
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cash_ledger'"
+    ).fetchone()
+    if row and row["sql"] and "INTEREST_INCOME" in row["sql"]:
+        return  # 이미 마이그레이션됨
+    conn.execute("ALTER TABLE cash_ledger RENAME TO cash_ledger_v1_6_migrating")
+
+
+def _finish_cash_ledger_entry_type_migration(conn: sqlite3.Connection) -> None:
+    """위 함수가 옮겨둔 임시 테이블(있다면)에서 새로 만들어진 cash_ledger로
+    행을 전부 그대로 복사하고 임시 테이블을 지운다. DDL_STATEMENTS 루프
+    다음에 호출해야 한다(그래야 새 cash_ledger가 이미 존재)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_ledger_v1_6_migrating'"
+    ).fetchone()
+    if not exists:
+        return
+    conn.execute(
+        """
+        INSERT INTO cash_ledger
+            (id, occurred_at, deposit_account_id, account_name_snapshot, entry_type,
+             amount, currency, memo, edited, created_at, updated_at)
+        SELECT id, occurred_at, deposit_account_id, account_name_snapshot, entry_type,
+               amount, currency, memo, edited, created_at, updated_at
+        FROM cash_ledger_v1_6_migrating
+        """
+    )
+    conn.execute("DROP TABLE cash_ledger_v1_6_migrating")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     _migrate_schedule_executions_fk(conn)  # DDL_STATEMENTS 루프보다 먼저(드롭 후 재생성).
+    _rename_cash_ledger_for_entry_type_migration(conn)  # 마찬가지로 루프보다 먼저.
     for statement in DDL_STATEMENTS:
         conn.execute(statement)
+    _finish_cash_ledger_entry_type_migration(conn)  # 루프 다음(새 cash_ledger로 데이터 복원).
     # 2026-08-02 추가: 이미 만들어져 있던 quote_latest 테이블에 change_pct
     # 컬럼을 보충한다(신규 DB는 위 CREATE TABLE에 이미 포함돼 있어 no-op).
     _add_column_if_missing(conn, "quote_latest", "change_pct", "change_pct REAL")

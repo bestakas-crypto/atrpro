@@ -45,6 +45,7 @@ function cacheDom() {
     'add-stock-is-etf',
     'btn-add-stock-cancel', 'btn-add-stock-save',
     'modal-deposit', 'modal-deposit-title', 'deposit-account-name', 'deposit-amount', 'deposit-currency',
+    'deposit-interest-field', 'deposit-process-interest',
     'btn-deposit-delete', 'btn-deposit-cancel', 'btn-deposit-save',
     'modal-confirm', 'confirm-message', 'confirm-cancel', 'confirm-ok',
     'modal-import', 'import-file-input', 'import-report', 'btn-import-cancel', 'btn-import-confirm',

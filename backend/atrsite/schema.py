@@ -409,9 +409,17 @@ DDL_STATEMENTS: list[str] = [
         occurred_at            TEXT NOT NULL,
         deposit_account_id     TEXT REFERENCES deposits(id) ON DELETE SET NULL,
         account_name_snapshot  TEXT NOT NULL,
+        -- v1.7(2026-08-12) INTEREST_INCOME 추가 -- 발행어음/CMA/RP처럼 매일
+        -- 이자가 붙는 계좌의 잔액 증가분을 기록하는 전용 구분. EXTERNAL_IN이
+        -- 아닌 이유: 외부에서 새로 들어온 돈이 아니라 그 계좌 스스로 불어난
+        -- 금액이라, cash_flow.py의 순외부현금흐름(EXTERNAL_IN/OUT만 집계)
+        -- 계산에 안 섞여야 한다 -- 안 섞이면 자동으로 "투자성과"로 정확히
+        -- 잡히고(V_t가 늘어난 만큼 그대로 반영), 섞이면 그 증가분이 상쇄돼서
+        -- 이자소득이 수익률 계산에서 사라진다. 그래도 계좌 잔액이 왜 늘었는지
+        -- 기록으로 남기고 싶다는 사용자 요청으로 별도 구분값을 둠.
         entry_type             TEXT NOT NULL
                                 CHECK(entry_type IN
-                                    ('EXTERNAL_IN', 'EXTERNAL_OUT', 'INTERNAL_IN', 'INTERNAL_OUT')),
+                                    ('EXTERNAL_IN', 'EXTERNAL_OUT', 'INTERNAL_IN', 'INTERNAL_OUT', 'INTEREST_INCOME')),
         amount                 REAL NOT NULL,
         currency               TEXT NOT NULL DEFAULT 'KRW',
         memo                   TEXT,

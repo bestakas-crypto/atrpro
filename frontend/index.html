@@ -399,6 +399,15 @@
       <label for="deposit-currency">통화</label>
       <input type="text" id="deposit-currency" value="KRW" />
     </div>
+    <!-- v1.7(2026-08-12): 발행어음/CMA/RP처럼 매일 이자가 붙는 계좌 수정용.
+         체크하면 (새 예금액 - 기존 예금액)을 이자소득으로 자동 기록한다
+         (수정 화면에서만 의미 있음 -- 신규 추가일 땐 "기존 금액"이 없어서 숨김). -->
+    <div class="field-group" id="deposit-interest-field" hidden>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;">
+        <input type="checkbox" id="deposit-process-interest" style="width:auto;" />
+        이자처리 (늘어난 금액을 이자소득으로 기록)
+      </label>
+    </div>
     <div class="modal-actions">
       <button id="btn-deposit-delete" class="btn btn-danger" hidden>삭제</button>
       <button id="btn-deposit-cancel" class="btn btn-secondary">취소</button>

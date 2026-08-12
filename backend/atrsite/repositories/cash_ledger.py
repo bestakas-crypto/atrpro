@@ -20,8 +20,14 @@ from typing import Any, Optional
 from ..utils import new_id, utcnow_iso
 
 SUPPORTED_CURRENCIES = ("KRW", "USD", "JPY")
-ENTRY_TYPES = ("EXTERNAL_IN", "EXTERNAL_OUT", "INTERNAL_IN", "INTERNAL_OUT")
-IN_TYPES = ("EXTERNAL_IN", "INTERNAL_IN")
+# v1.7(2026-08-12) -- INTEREST_INCOME(이자소득) 추가. 발행어음/CMA/RP처럼
+# 매일 이자가 붙는 계좌의 잔액 증가분을 별도 구분으로 기록한다. IN_TYPES에
+# 넣어서 장부 UI에서는 "입금"(+)으로 보이지만, cash_flow.py의 순외부현금흐름
+# 계산(EXTERNAL_IN/OUT만 집계)에는 안 섞이게 의도적으로 EXTERNAL이 아니다 --
+# 안 섞여야 이자소득이 그대로 투자성과로 잡히고(순외부현금흐름에서 상쇄되지
+# 않음), 그러면서도 "왜 잔액이 늘었나"는 기록으로 남는다.
+ENTRY_TYPES = ("EXTERNAL_IN", "EXTERNAL_OUT", "INTERNAL_IN", "INTERNAL_OUT", "INTEREST_INCOME")
+IN_TYPES = ("EXTERNAL_IN", "INTERNAL_IN", "INTEREST_INCOME")
 OUT_TYPES = ("EXTERNAL_OUT", "INTERNAL_OUT")
 
 

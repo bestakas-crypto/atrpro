@@ -73,6 +73,10 @@ class DepositUpdate(BaseModel):
     account_name: Optional[str] = None
     amount: Optional[float] = Field(default=None, ge=0)
     currency: Optional[str] = None
+    # v1.7(2026-08-12, 이자소득) -- true면 (새 amount - 기존 amount)를
+    # cash_ledger에 entry_type='INTEREST_INCOME'으로 자동 기록한다.
+    # 발행어음/CMA/RP처럼 매일 이자가 붙는 계좌를 수정할 때 체크하는 용도.
+    process_interest: bool = False
 
 
 # backend/atrsite/api/schemas.py -- v1.5 입출금 통합 장부(2026-08-12 추가).
