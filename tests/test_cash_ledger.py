@@ -63,8 +63,10 @@ def test_create_entry_external_out(client):
     assert resp.json()["direction"] == "OUT"
 
 
-@pytest.mark.parametrize("entry_type", ["EXTERNAL_IN", "EXTERNAL_OUT", "INTERNAL_IN", "INTERNAL_OUT"])
-def test_all_four_entry_types_accepted(client, entry_type):
+@pytest.mark.parametrize(
+    "entry_type", ["EXTERNAL_IN", "EXTERNAL_OUT", "INTERNAL_IN", "INTERNAL_OUT", "INTEREST_INCOME"]
+)
+def test_all_five_entry_types_accepted(client, entry_type):
     dep = _make_deposit(client)
     resp = client.post("/api/v1/cash-ledger", json={
         "occurred_at": "2026-08-12T09:00:00", "deposit_account_id": dep["id"],
@@ -283,6 +285,26 @@ def test_net_summary_excludes_internal_transfers(client):
     assert summary["KRW"]["net"] == pytest.approx(2_500_000)
 
 
+def test_net_summary_excludes_interest_income(client):
+    """v1.7 -- 이자소득은 외부에서 들어온 돈이 아니라 계좌 스스로 불어난
+    돈이라, INTERNAL_*와 마찬가지로 순외부현금흐름 계산에서 빠져야 한다
+    (그래야 analyze.kunoh.top의 수익률 계산에서 상쇄되지 않고 그대로
+    투자성과로 잡힘)."""
+    dep = _make_deposit(client)
+    client.post("/api/v1/cash-ledger", json={
+        "occurred_at": "2026-08-12T09:00:00", "deposit_account_id": dep["id"],
+        "entry_type": "EXTERNAL_IN", "amount": 1_000_000, "currency": "KRW",
+    })
+    client.post("/api/v1/cash-ledger", json={
+        "occurred_at": "2026-08-12T10:00:00", "deposit_account_id": dep["id"],
+        "entry_type": "INTEREST_INCOME", "amount": 523, "currency": "KRW",
+    })
+
+    summary = client.get("/api/v1/cash-flow/net").json()
+    assert summary["KRW"]["inflow"] == pytest.approx(1_000_000)  # 523원은 안 섞임
+    assert summary["KRW"]["net"] == pytest.approx(1_000_000)
+
+
 def test_daily_net_flow_merges_in_and_out_per_day(client):
     dep = _make_deposit(client)
     client.post("/api/v1/cash-ledger", json={
@@ -466,4 +488,64 @@ def test_ledger_entries_excluded_from_net_when_created_fresh_without_legacy_data
     conn = db_module.connect(tmp_path / "fresh.db")
     db_module.init_db(conn)
     assert conn.execute("SELECT COUNT(*) AS n FROM cash_ledger").fetchone()["n"] == 0
+    conn.close()
+
+
+def test_migration_adds_interest_income_to_cash_ledger_without_losing_existing_rows(tmp_path):
+    """v1.7 -- cash_ledger.entry_type CHECK 제약이 옛 4종(EXTERNAL_IN/OUT,
+    INTERNAL_IN/OUT)뿐이던 DB를 흉내내서, init_db()가 기존 행을 잃지 않고
+    INTEREST_INCOME까지 받아들이는 새 제약으로 재생성하는지 직접 검증한다.
+    cash_ledger는 schedule_executions FK 마이그레이션(v1.5)과 달리 이미
+    실데이터가 있는 상태를 재현해야 하므로 "비어있으면 drop"이 아니라
+    실제로 행을 하나 넣어두고 이관 후에도 그대로 남아있는지 확인한다."""
+    import sqlite3
+
+    from atrsite import db as db_module
+
+    db_path = tmp_path / "legacy_entry_type.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    # 옛(v1.5) 제약 그대로 재현 -- INTEREST_INCOME이 아직 없음.
+    conn.execute(
+        """
+        CREATE TABLE cash_ledger (
+            id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL,
+            deposit_account_id TEXT, account_name_snapshot TEXT NOT NULL,
+            entry_type TEXT NOT NULL
+                CHECK(entry_type IN ('EXTERNAL_IN', 'EXTERNAL_OUT', 'INTERNAL_IN', 'INTERNAL_OUT')),
+            amount REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'KRW', memo TEXT,
+            edited INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO cash_ledger VALUES "
+        "('e1', '2026-08-05T10:00:00', NULL, '기존계좌', 'EXTERNAL_OUT', 50000, 'KRW', NULL, 0, 'x', 'x')"
+    )
+    conn.commit()
+    conn.close()
+
+    conn = db_module.connect(db_path)
+    db_module.init_db(conn)  # 여기서 재생성 + 데이터 복원이 일어나야 함.
+
+    row = conn.execute("SELECT * FROM cash_ledger WHERE id = 'e1'").fetchone()
+    assert row is not None and row["amount"] == 50000  # 기존 데이터 보존
+    assert conn.execute("SELECT COUNT(*) AS n FROM cash_ledger").fetchone()["n"] == 1  # 중복 없음
+
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cash_ledger'"
+    ).fetchone()["sql"]
+    assert "INTEREST_INCOME" in table_sql
+
+    # 새 제약으로 INTEREST_INCOME 삽입이 실제로 되는지까지 확인(FK 위반 없이).
+    conn.execute(
+        "INSERT INTO cash_ledger VALUES "
+        "('e2', '2026-08-12T09:00:00', NULL, '기존계좌', 'INTEREST_INCOME', 523, 'KRW', NULL, 0, 'x', 'x')"
+    )
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) AS n FROM cash_ledger").fetchone()["n"] == 2
+
+    # 재실행해도 중복 이관/재생성이 안 일어나야 함(idempotent).
+    db_module.init_db(conn)
+    assert conn.execute("SELECT COUNT(*) AS n FROM cash_ledger").fetchone()["n"] == 2
     conn.close()

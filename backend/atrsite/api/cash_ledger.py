@@ -24,6 +24,7 @@ _ENTRY_TYPE_LABEL = {
     "EXTERNAL_OUT": "소비출금",
     "INTERNAL_IN": "내부이체입금",
     "INTERNAL_OUT": "내부이체출금",
+    "INTEREST_INCOME": "이자소득",
 }
 
 

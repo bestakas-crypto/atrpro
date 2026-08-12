@@ -143,6 +143,58 @@ def test_deposits_crud(client):
     assert client.get("/api/v1/deposits").json() == []
 
 
+# ---------------------------------------------------------------------------
+# v1.7(2026-08-12) -- 이자처리(발행어음/CMA/RP 계좌 이자소득 자동 기록).
+# ---------------------------------------------------------------------------
+def test_deposit_interest_processing_creates_interest_income_ledger_entry(client):
+    dep = client.post("/api/v1/deposits", json={"account_name": "한투 CMA", "amount": 1_000_000, "currency": "KRW"}).json()
+
+    updated = client.patch(
+        f"/api/v1/deposits/{dep['id']}",
+        json={"amount": 1_000_523, "process_interest": True},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["amount"] == pytest.approx(1_000_523)
+
+    ledger = client.get("/api/v1/cash-ledger", params={"deposit_account_id": dep["id"]}).json()
+    assert ledger["total"] == 1
+    entry = ledger["items"][0]
+    assert entry["entry_type"] == "INTEREST_INCOME"
+    assert entry["amount"] == pytest.approx(523)
+    assert entry["direction"] == "IN"
+
+
+def test_deposit_interest_processing_rejects_when_amount_not_increased(client):
+    dep = client.post("/api/v1/deposits", json={"account_name": "메리트", "amount": 1_000_000, "currency": "KRW"}).json()
+
+    resp = client.patch(f"/api/v1/deposits/{dep['id']}", json={"amount": 1_000_000, "process_interest": True})
+    assert resp.status_code == 400
+
+    resp2 = client.patch(f"/api/v1/deposits/{dep['id']}", json={"amount": 900_000, "process_interest": True})
+    assert resp2.status_code == 400
+
+    # 거부됐으니 잔액도, 장부에도 아무 변화가 없어야 함(GET /deposits/{id} 단건
+    # 조회 엔드포인트가 없어서 목록에서 찾는다).
+    deposits = client.get("/api/v1/deposits").json()
+    current = next(d for d in deposits if d["id"] == dep["id"])
+    assert current["amount"] == pytest.approx(1_000_000)
+    assert client.get("/api/v1/cash-ledger", params={"deposit_account_id": dep["id"]}).json()["total"] == 0
+
+
+def test_deposit_interest_processing_requires_amount(client):
+    dep = client.post("/api/v1/deposits", json={"account_name": "Merits USD", "amount": 100, "currency": "USD"}).json()
+    resp = client.patch(f"/api/v1/deposits/{dep['id']}", json={"account_name": "Merits USD 계좌", "process_interest": True})
+    assert resp.status_code == 400
+
+
+def test_deposit_update_without_process_interest_flag_does_not_touch_ledger(client):
+    """기본값(false)이면 예전처럼 잔액만 바뀌고 장부에는 아무 것도 안 남아야
+    한다 -- 하위호환(스펙 10절 "완전히 독립적인 기록" 원칙 유지)."""
+    dep = client.post("/api/v1/deposits", json={"account_name": "韓投 RP", "amount": 500_000, "currency": "KRW"}).json()
+    client.patch(f"/api/v1/deposits/{dep['id']}", json={"amount": 600_000})
+    assert client.get("/api/v1/cash-ledger", params={"deposit_account_id": dep["id"]}).json()["total"] == 0
+
+
 def test_dashboard_totals_with_fx(client):
     client.put("/api/v1/fx", json={"rates": {"USD": 1300}, "display_currency": "KRW"})
     inst = client.post("/api/v1/instruments", json={"name": "달러종목", "currency": "USD"}).json()
