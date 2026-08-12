@@ -168,6 +168,72 @@ def test_dummy_quote_is_deterministic_per_instrument_code(dummy_mode):
         client.close()
 
 
+# ---------------------------------------------------------------------------
+# 벤치마크 지수(코스피/S&P500) -- analyze.kunoh.top 4단계(2026-08-12 추가).
+# TR ID/파라미터/응답 필드명은 실전 계좌로 직접 호출해서 확인한 실제 응답
+# 구조를 그대로 흉내낸다(2026-08-12, KOSPI/S&P500 둘 다 실제 값이 FRED
+# 공식 데이터와 일치함을 확인했음).
+# ---------------------------------------------------------------------------
+
+def test_get_domestic_index_daily_parses_and_sorts_ascending(fake_credentials):
+    client, captured = _client_with_captured_request({
+        "rt_cd": "0",
+        "output2": [
+            {"stck_bsop_date": "20260812", "bstp_nmix_prpr": "6638.35", "bstp_nmix_hgpr": "6668.43", "bstp_nmix_lwpr": "6413.50"},
+            {"stck_bsop_date": "20260811", "bstp_nmix_prpr": "6345.53", "bstp_nmix_hgpr": "6405.81", "bstp_nmix_lwpr": "6213.78"},
+        ],
+    })
+    try:
+        bars = client.get_domestic_index_daily("0001", base_date="2026-08-12")
+        assert captured["params"]["FID_COND_MRKT_DIV_CODE"] == "U"
+        assert captured["params"]["FID_INPUT_ISCD"] == "0001"
+        assert captured["params"]["FID_INPUT_DATE_1"] == "20260812"
+        assert [b.trade_date for b in bars] == ["2026-08-11", "2026-08-12"]  # 오름차순
+        assert bars[1].close == 6638.35
+    finally:
+        client.close()
+
+
+def test_get_overseas_index_daily_sends_both_dates_and_n_market_code(fake_credentials):
+    client, captured = _client_with_captured_request({
+        "rt_cd": "0",
+        "output2": [
+            {"stck_bsop_date": "20260803", "ovrs_nmix_prpr": "7600.50", "ovrs_nmix_hgpr": "7610.04", "ovrs_nmix_lwpr": "7504.78"},
+        ],
+    })
+    try:
+        bars = client.get_overseas_index_daily("SPX", start_date="2026-08-01", end_date="2026-08-12")
+        assert captured["params"]["FID_COND_MRKT_DIV_CODE"] == "N"
+        assert captured["params"]["FID_INPUT_ISCD"] == "SPX"
+        assert captured["params"]["FID_INPUT_DATE_1"] == "20260801"
+        assert captured["params"]["FID_INPUT_DATE_2"] == "20260812"
+        assert bars[0].close == 7600.50
+    finally:
+        client.close()
+
+
+def test_index_daily_raises_kis_api_error_on_bad_rt_cd(fake_credentials):
+    client = _client_with_fake_transport({"rt_cd": "1", "msg1": "조회 실패"})
+    try:
+        with pytest.raises(KisApiError):
+            client.get_domestic_index_daily("0001", base_date="2026-08-12")
+    finally:
+        client.close()
+
+
+def test_dummy_index_bars_are_deterministic_and_filtered_by_start_date(dummy_mode):
+    client = KisClient()
+    try:
+        kospi1 = client.get_domestic_index_daily("0001", base_date="2026-08-12")
+        kospi2 = client.get_domestic_index_daily("0001", base_date="2026-08-12")
+        assert [b.close for b in kospi1] == [b.close for b in kospi2]  # 재현 가능
+
+        sp500 = client.get_overseas_index_daily("SPX", start_date="2026-08-10", end_date="2026-08-12")
+        assert all(b.trade_date >= "2026-08-10" for b in sp500)  # start_date 필터링
+    finally:
+        client.close()
+
+
 def test_dummy_daily_bars_have_enough_length_for_atr14(dummy_mode):
     client = KisClient()
     try:
