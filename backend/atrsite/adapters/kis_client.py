@@ -48,6 +48,23 @@ EP_CURRENT_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price"
 TR_DAILY_CHART_PRICE = "FHKST03010100"  # 국내주식기간별시세(일_주_월_년) [v1_국내주식-016]
 EP_DAILY_CHART_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 
+# analyze.kunoh.top 4단계(벤치마크 비교, 2026-08-12 추가) -- KIS가 이미 갖고
+# 있는 지수 조회 TR. manual 폴더엔 명세가 없어서 KIS 공식 GitHub
+# (koreainvestment/open-trading-api, examples_user/domestic_stock·overseas_stock)
+# 예제 코드로 TR ID/파라미터를 확인했고, 실전 계좌로 직접 호출해서 값이
+# 미국 연준(FRED)의 공식 S&P500 시계열과 완전히 일치함을 검증했다(2026-08-12).
+# Yahoo Finance 같은 비공식 외부 API 대신 이미 연동된 KIS로 처리하는 게
+# 더 신뢰할 수 있다고 판단해서 채택함 -- 새 계정/키가 필요 없다.
+TR_DOMESTIC_INDEX_DAILY = "FHPUP02120000"  # 국내업종 일자별지수 [v1_국내주식-065]
+EP_DOMESTIC_INDEX_DAILY = "/uapi/domestic-stock/v1/quotations/inquire-index-daily-price"
+TR_OVERSEAS_INDEX_DAILY = "FHKST03030100"  # 해외주식 종목_지수_환율기간별시세 [v1_해외주식-012]
+EP_OVERSEAS_INDEX_DAILY = "/uapi/overseas-price/v1/quotations/inquire-daily-chartprice"
+
+# FID_INPUT_ISCD 값 -- 코스피는 "0001"(업종코드), S&P500은 "SPX"(".SPX"
+# 아님 -- 실전 계좌로 둘 다 직접 확인, ".SPX"는 빈 응답이 옴).
+KOSPI_INDEX_CODE = "0001"
+SP500_INDEX_CODE = "SPX"
+
 # FID_COND_MRKT_DIV_CODE -- "J:KRX, NX:NXT, UN:통합" (명세 그대로).
 FID_MARKET_DIV_KRX = "J"
 FID_MARKET_DIV_NXT = "NX"
@@ -450,6 +467,99 @@ class KisClient:
         bars.sort(key=lambda b: b.trade_date)
         return bars
 
+    def get_domestic_index_daily(self, index_code: str, base_date: str) -> list[DailyBar]:
+        """국내업종 일자별지수 [v1_국내주식-065] (TR FHPUP02120000).
+
+        국내 주식 일봉 TR과 달리 시작/종료 날짜 범위가 아니라 기준일
+        (FID_INPUT_DATE_1) 하나만 받고 거기서부터 과거로 데이터를 돌려준다
+        (실전 계좌로 직접 확인). output2가 최신순으로 오므로 다른 일봉
+        메서드와 동일하게 오름차순으로 재정렬한다. FID_COND_MRKT_DIV_CODE는
+        항상 "U"(업종) -- 개별 종목(J)이 아니다.
+        """
+        self.rate_limiter.wait()
+        if is_dummy_mode():
+            return _dummy_index_bars(index_code, base_date)
+
+        body = self._get_json(
+            self._base_url() + EP_DOMESTIC_INDEX_DAILY,
+            headers=self._headers(TR_DOMESTIC_INDEX_DAILY),
+            params={
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_COND_MRKT_DIV_CODE": "U",
+                "FID_INPUT_ISCD": index_code,
+                "FID_INPUT_DATE_1": base_date.replace("-", ""),
+            },
+        )
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"국내지수 일자별조회 실패 code={index_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+
+        bars: list[DailyBar] = []
+        for row in body.get("output2") or []:
+            raw_date = row.get("stck_bsop_date")
+            if not raw_date:
+                continue
+            try:
+                close = float(row["bstp_nmix_prpr"])
+                high = float(row["bstp_nmix_hgpr"])
+                low = float(row["bstp_nmix_lwpr"])
+            except (KeyError, ValueError) as exc:
+                raise KisApiError(f"국내지수 응답 형식 이상 code={index_code}: {row}") from exc
+            bars.append(DailyBar(
+                trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                high=high, low=low, close=close,
+            ))
+
+        bars.sort(key=lambda b: b.trade_date)
+        return bars
+
+    def get_overseas_index_daily(self, index_code: str, start_date: str, end_date: str) -> list[DailyBar]:
+        """해외주식 종목_지수_환율기간별시세(일_주_월_년) [v1_해외주식-012] (TR
+        FHKST03030100). 국내 지수 TR과 달리 시작/종료 날짜를 둘 다 받는다.
+        FID_COND_MRKT_DIV_CODE="N"(해외지수) 고정 -- 다우30/나스닥100/S&P500만
+        이 TR로 조회 가능하다고 KIS 공식 예제에 명시돼 있음(그 외 종목은
+        해외주식기간별시세를 따로 써야 함, 이 프로젝트에선 안 씀).
+        """
+        self.rate_limiter.wait()
+        if is_dummy_mode():
+            return _dummy_index_bars(index_code, end_date, start_date=start_date)
+
+        body = self._get_json(
+            self._base_url() + EP_OVERSEAS_INDEX_DAILY,
+            headers=self._headers(TR_OVERSEAS_INDEX_DAILY),
+            params={
+                "FID_COND_MRKT_DIV_CODE": "N",
+                "FID_INPUT_ISCD": index_code,
+                "FID_INPUT_DATE_1": start_date.replace("-", ""),
+                "FID_INPUT_DATE_2": end_date.replace("-", ""),
+                "FID_PERIOD_DIV_CODE": "D",
+            },
+        )
+        if body.get("rt_cd") != "0":
+            raise KisApiError(
+                f"해외지수 기간별조회 실패 code={index_code} rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}"
+            )
+
+        bars: list[DailyBar] = []
+        for row in body.get("output2") or []:
+            raw_date = row.get("stck_bsop_date")
+            if not raw_date:
+                continue
+            try:
+                close = float(row["ovrs_nmix_prpr"])
+                high = float(row["ovrs_nmix_hgpr"])
+                low = float(row["ovrs_nmix_lwpr"])
+            except (KeyError, ValueError) as exc:
+                raise KisApiError(f"해외지수 응답 형식 이상 code={index_code}: {row}") from exc
+            bars.append(DailyBar(
+                trade_date=f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                high=high, low=low, close=close,
+            ))
+
+        bars.sort(key=lambda b: b.trade_date)
+        return bars
+
     def close(self) -> None:
         self._http.close()
 
@@ -502,6 +612,31 @@ def _dummy_daily_bars(instrument_code: str, start_date: str, end_date: str) -> l
         low = price * rng.uniform(0.98, 1.0)
         close = price
         bars.append(DailyBar(trade_date=d.isoformat(), high=round(high, -1), low=round(low, -1), close=round(close, -1)))
+    return bars
+
+
+def _dummy_index_bars(index_code: str, end_date: str, *, start_date: Optional[str] = None) -> list[DailyBar]:
+    """지수용 더미 데이터 -- _dummy_daily_bars와 동일한 시드 방식(재현 가능).
+    실제 지수 값 범위(코스피 수천대, S&P500 수천대)에 가깝게 base를 좀 더
+    크게 잡는다. start_date가 주어지면(해외지수 TR처럼 범위조회) 그 이후만
+    남기고 잘라서 반환 -- 국내지수 TR은 start_date 없이 기준일 하나뿐이라
+    호출 안 함."""
+    base = _dummy_base_price(index_code) + 5000  # 지수답게 더 큰 기준값
+    rng = _seeded_random(index_code + "-index-bars")
+    end = date.fromisoformat(end_date) if end_date else date.today()
+    n = 20
+    bars: list[DailyBar] = []
+    price = base
+    for i in range(n):
+        d = end - timedelta(days=(n - 1 - i))
+        drift = rng.uniform(-0.01, 0.01)
+        price = max(price * (1 + drift), 100)
+        high = price * rng.uniform(1.0, 1.02)
+        low = price * rng.uniform(0.98, 1.0)
+        close = price
+        bars.append(DailyBar(trade_date=d.isoformat(), high=round(high, -1), low=round(low, -1), close=round(close, -1)))
+    if start_date:
+        bars = [b for b in bars if b.trade_date >= start_date]
     return bars
 
 
