@@ -2033,3 +2033,28 @@ PRAGMA integrity_check 통과, 재실행해도 중복 없음(idempotent) 확인 
 install -> atrsite-web 재시작 -> health 200 확인 -> 실제 3건 데이터가
 cash_ledger로 정확히 이관됐음을 SSH+curl로 직접 확인(총 순증감 -376,520원,
 계좌명/메모 전부 정확) -> 배포 후 로그에 에러 없음 확인.
+
+[v1.6 -- 벤치마크 지수(코스피/S&P500) 조회 API] (2026-08-12)
+====================================================================
+analyze.kunoh.top 4단계(벤치마크 비교)를 위한 데이터 기반. 원래 외부
+Yahoo Finance 비공식 API로 계획하고 작업지시서까지 Codex에게 전달했는데,
+사용자가 "한투에서 제공 안 하나?"라고 물어봐서 확인 -- 실제로 KIS Open
+API에 국내 업종/지수 조회(FHPUP02120000)와 해외 지수 조회(FHKST03030100)
+TR이 이미 있었고, 코스피(0001)/S&P500(SPX)를 실전 계좌로 직접 호출해서
+값이 미국 연준(FRED) 공식 S&P500 데이터와 완전히 일치함을 검증함. 이미
+연동돼 있고 신뢰성이 검증된 KIS를 재사용하는 쪽으로 방향 전환(Yahoo
+작업지시서는 폐기).
+
+kis_client.py에 get_domestic_index_daily/get_overseas_index_daily 추가
+(둘 다 더미모드 폴백 지원), services/benchmark_service.py + api/benchmark.py
+로 GET /api/v1/benchmark/kospi·sp500 신설(읽기전용, DB 저장 없음). pytest
+451개 통과(신규 10개). 로컬/프로덕션 둘 다 실제 KIS 서버로 라이브 검증
+완료 -- 과거 날짜 값이 사전 검증값과 정확히 일치, 당일(장중) 값은 자연스럽게
+호출 시점마다 다름(정상). 도중 KIS의 "토큰 1분당 1회 발급 제한"에 한 번
+걸렸는데 크래시 없이 502로 정상 처리되는 것도 확인함.
+
+배포: main 병합(`f87c797`) -> push -> VPS git pull -> atrsite-web 재시작 ->
+실 프로덕션에서 즉시 정상 응답 확인.
+
+analyze.kunoh.top 쪽은 이 API를 소비하도록 4단계 작업지시서를 재작성해서
+전달할 예정(기존 Yahoo 기반 지시서는 폐기).
