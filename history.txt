@@ -2058,3 +2058,44 @@ kis_client.py에 get_domestic_index_daily/get_overseas_index_daily 추가
 
 analyze.kunoh.top 쪽은 이 API를 소비하도록 4단계 작업지시서를 재작성해서
 전달할 예정(기존 Yahoo 기반 지시서는 폐기).
+
+=== v1.7: 예금계좌 이자처리(발행어음/CMA/RP 이자소득 자동 기록) (2026-08-12) ===
+
+사용자 요청: 한투 CMA(발행어음계좌), 메리트, Merits USD, 韓投 RP 등 매일
+이자가 붙는 예금계좌가 있는데, 계좌 잔액을 수동으로 갱신할 때마다
+"이자처리" 체크박스를 켜면 (갱신 금액 - 기존 금액)을 자동으로 이자소득
+데이터로 남겨달라는 요청.
+
+schema.py의 cash_ledger.entry_type CHECK 제약에 INTEREST_INCOME 추가.
+SQLite는 CHECK 제약을 ALTER로 못 바꾸므로 v1.5 때와 같은 패턴(rename ->
+DDL 재생성 -> INSERT SELECT로 데이터 복사 -> 임시테이블 삭제)으로
+db.py에 마이그레이션 작성 -- cash_ledger에 실제 운영 데이터(출금 3건)가
+있어서 안전하게 보존해야 했음.
+
+repositories/cash_ledger.py: INTEREST_INCOME을 IN_TYPES(입금 방향)에는
+포함하되, cash_flow.py의 EXTERNAL 전용 순외부현금흐름 집계에는 포함하지
+않음 -- 3단계에서 만든 리스크지표(r_t = (V_t - V_(t-1) - F_t)/V_(t-1))
+계산에서 이자소득이 "외부현금"으로 빠지면 안 되고, 자연스럽게 포트폴리오
+수익률로 반영돼야 하기 때문(내부이체와 동일한 취급).
+
+api/deposits.py의 PATCH /deposits/{id}에 process_interest 플래그 추가.
+켜져 있으면 diff(새 금액-기존 금액)를 계산해서 diff <= 0이면 400 에러,
+그렇지 않으면 같은 요청 트랜잭션 안에서 INTEREST_INCOME 항목을
+cash_ledger에 원자적으로 추가한 뒤 잔액을 갱신.
+
+프론트엔드: index.html 예금 수정 모달에 "이자처리" 체크박스 추가(신규
+추가 모달에는 숨김 -- 비교 대상 "기존 금액"이 없으므로 개념 자체가
+성립하지 않음). withdrawals.html 필터/입력 드롭다운에도 "이자소득"
+옵션 추가.
+
+검증: pytest 458개 통과(신규 4 + 3건). 실제 운영 DB 사본으로
+마이그레이션 적용 -- cash_ledger 3행 그대로 보존, data content
+identical: True, integrity_check: ok, 재실행해도 idempotent. 로컬
+브라우저로 실제 체크박스 플로우 E2E 확인: 예금 추가(100만원) -> 수정
+(105만원 + 이자처리 체크) -> 저장 -> cash-ledger API에 INTEREST_INCOME
+50,000원 정상 생성 -> withdrawals.html에도 "이자소득 +KRW 50,000"으로
+정상 렌더 -> 거부 경로(금액 감소 + 체크)도 클라이언트에서 저장 차단
+확인 -> 생성한 테스트 데이터 전부 정리.
+
+배포: main 병합(`607e307`) -> push -> VPS git pull -> atrsite-web
+재시작 -> 실 프로덕션 DB 마이그레이션(운영 데이터 3행) 정상 완료 확인.
